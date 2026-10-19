@@ -1,0 +1,10 @@
+{"type":"tempo","bpm":120}
+{"type":"tone","instrument":"analog_bass","oscillator":"saw","cutoff_hz":1400.0,"attack_seconds":0.005,"release_seconds":0.040,"gain":2.800}
+{"type":"note","instrument":"analog_bass","note":36,"beat":0.000,"duration_beats":0.200,"velocity":0.550}
+{"type":"note","instrument":"analog_bass","note":36,"beat":1.000,"duration_beats":0.200,"velocity":0.550}
+{"type":"note","instrument":"analog_bass","note":36,"beat":2.000,"duration_beats":0.200,"velocity":0.550}
+{"type":"note","instrument":"analog_bass","note":36,"beat":3.000,"duration_beats":0.200,"velocity":0.550}
+{"type":"note","instrument":"analog_bass","note":40,"beat":0.500,"duration_beats":0.200,"velocity":0.450}
+{"type":"note","instrument":"analog_bass","note":40,"beat":2.500,"duration_beats":0.200,"velocity":0.450}
+{"type":"note","instrument":"analog_bass","note":43,"beat":1.750,"duration_beats":0.200,"velocity":0.450}
+{"type":"note","instrument":"analog_bass","note":43,"beat":3.750,"duration_beats":0.200,"velocity":0.450}

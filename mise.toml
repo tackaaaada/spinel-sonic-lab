@@ -1,0 +1,78 @@
+[tools]
+ruby = "4.0.1"
+rust = "1.99.1"
+
+[env]
+SPINEL_BIN = "{{config_root}}/../.tools/spinel/bin/spinel"
+
+[tasks.test]
+description = "Run Rust and actual Spinel composition tests"
+run = ["cargo test --offline --manifest-path core/Cargo.toml", "sh tests/check_spinel.sh", "python3 tests/check_samples.py"]
+
+[tasks.build]
+description = "Build the Rust player"
+run = "cargo build --offline --manifest-path core/Cargo.toml"
+
+[tasks.synthdef]
+env = { QT_QPA_PLATFORM = "offscreen", QT_QPA_PLATFORMTHEME = "generic" }
+description = "Generate the SuperCollider SynthDef"
+run = ["sclang synthdefs/analog_bass.scd", "sclang synthdefs/sampler.scd"]
+
+[tasks.doctor]
+description = "Check the Omarchy music development prerequisites"
+run = """
+set -eu
+for tool in ruby cargo cc make sclang scsynth pactl python3; do
+  command -v "$tool" >/dev/null || { echo "Missing tool: $tool"; exit 1; }
+done
+test -x "$SPINEL_BIN" || { echo "Spinel is not built: $SPINEL_BIN"; exit 1; }
+pacman -Q pipewire-jack >/dev/null 2>&1 || {
+  echo "Install audio compatibility: sudo pacman -S --needed pipewire-jack"
+  exit 1
+}
+systemctl --user is-active --quiet pipewire
+printf 'Current audio output: '
+pactl get-default-sink
+printf 'Project space: '
+df -h . | tail -1
+"""
+
+[tasks.audio]
+env = { SC_JACK_DEFAULT_OUTPUTS = "system" }
+description = "Start the local stereo audio server (stop with Ctrl+C)"
+depends = ["doctor"]
+run = "scsynth -u 57110 -B 127.0.0.1 -i 0 -o 2"
+
+[tasks.check-score]
+description = "Compile the sample with Spinel and validate without audio"
+depends = ["build"]
+run = "core/target/debug/spinel-sonic-lab --dry-run composer/bin/emit_bass.rb"
+
+[tasks.play]
+description = "Play the four-note sample; run mise run audio in another terminal first"
+depends = ["build", "synthdef"]
+run = "core/target/debug/spinel-sonic-lab composer/bin/emit_bass.rb"
+
+[tasks.watch]
+description = "Live reload the score on bar boundaries; requires the audio server"
+depends = ["build", "synthdef"]
+run = "core/target/debug/spinel-sonic-lab --watch composer/bin/live_session.rb"
+
+[tasks.samples]
+description = "Render kick, snare and hat WAV assets with SuperCollider NRT"
+depends = ["synthdef"]
+run = ["python3 scripts/render_drum_samples.py", "python3 tests/check_samples.py"]
+
+[tasks.check-samples]
+description = "Check generated WAV format, onset, tail and headroom"
+run = "python3 tests/check_samples.py"
+
+[tasks.play-samples]
+description = "Play four bars of sampled drums and synth bass; requires mise run audio"
+depends = ["build", "synthdef"]
+run = "core/target/debug/spinel-sonic-lab --watch --bars 4 composer/bin/emit_samples.rb"
+
+[tasks.watch-samples]
+description = "Live edit sampled drums and bass on bar boundaries"
+depends = ["build", "synthdef"]
+run = "core/target/debug/spinel-sonic-lab --watch composer/bin/emit_samples.rb"

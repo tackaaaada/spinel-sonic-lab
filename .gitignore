@@ -1,0 +1,6 @@
+/core/target/
+/synthdefs/*.scsyndef
+/.tools/
+/composer/bin/emit_bass
+/composer/bin/emit_bright_bass
+/composer/bin/emit_wave_bass

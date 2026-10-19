@@ -1,0 +1,5 @@
+{"type":"tempo","bpm":120}
+{"type":"note","instrument":"analog_bass","note":36,"beat":0.000,"duration_beats":0.500,"velocity":0.800}
+{"type":"note","instrument":"analog_bass","note":40,"beat":0.500,"duration_beats":0.500,"velocity":0.800}
+{"type":"note","instrument":"analog_bass","note":43,"beat":1.000,"duration_beats":0.500,"velocity":0.800}
+{"type":"note","instrument":"analog_bass","note":48,"beat":1.500,"duration_beats":0.500,"velocity":0.800}
