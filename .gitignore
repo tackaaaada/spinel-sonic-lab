@@ -6,3 +6,16 @@
 /composer/bin/emit_wave_bass
 /.gemini/
 /.ruby-lsp/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Secrets / logs / scratch
+.env
+.env.*
+*.log
+/tmp/
+/scratch/
