@@ -4,3 +4,5 @@
 /composer/bin/emit_bass
 /composer/bin/emit_bright_bass
 /composer/bin/emit_wave_bass
+/.gemini/
+/.ruby-lsp/
