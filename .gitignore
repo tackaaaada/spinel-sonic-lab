@@ -19,3 +19,6 @@
 *.log
 /tmp/
 /scratch/
+
+# Local agent skills
+/.agents/
