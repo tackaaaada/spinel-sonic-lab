@@ -314,7 +314,7 @@ impl crate::sampler::SampleBackend for &OscClient {
     }
 }
 
-fn encode_alloc_read(id: i32, path: &str) -> Vec<u8> {
+pub fn encode_alloc_read(id: i32, path: &str) -> Vec<u8> {
     let mut packet = Vec::new();
     osc_string(&mut packet, "/b_allocRead");
     osc_string(&mut packet, ",isii");
@@ -513,8 +513,11 @@ fn sample_tags(pan: Option<f32>, bus: Option<i32>) -> String {
     format!(",siiisisf{pan_tags}{bus_tags}")
 }
 
+/// Sample SynthDefs, loaded once a score uses samples: mono first, then stereo.
+pub const SAMPLE_SYNTHDEFS: [&str; 2] = ["sample_mono", "sample_stereo"];
+
 fn sample_synthdef(asset: &SampleAsset) -> &'static str {
-    if asset.channels == 1 { "sample_mono" } else { "sample_stereo" }
+    SAMPLE_SYNTHDEFS[usize::from(asset.channels != 1)]
 }
 
 /// Engine side of the channel graph: definitions, groups, and nodes.
@@ -561,7 +564,10 @@ fn encode_quiet_group_free() -> Vec<u8> {
     osc_string(&mut quiet, "/error");
     osc_string(&mut quiet, ",i");
     osc_i32(&mut quiet, -1); // Bundle-local: a missing group is not a failure.
-    bundle_of(OSC_IMMEDIATE_TIMETAG, &[quiet, encode_n_free(&[STRIP_GROUP, RETURN_GROUP])])
+    encode_messages_bundle(
+        OSC_IMMEDIATE_TIMETAG,
+        &[quiet, encode_n_free(&[STRIP_GROUP, RETURN_GROUP])],
+    )
 }
 
 /// Sources are added at the head of the root group; strips and then returns
@@ -587,7 +593,7 @@ pub fn encode_graph_node(spec: &NodeSpec<'_>) -> Vec<u8> {
     out
 }
 
-fn bundle_of(timetag: u64, messages: &[Vec<u8>]) -> Vec<u8> {
+pub fn encode_messages_bundle(timetag: u64, messages: &[Vec<u8>]) -> Vec<u8> {
     let mut out = bundle_header(timetag);
     for message in messages {
         osc_i32(&mut out, message.len() as i32);

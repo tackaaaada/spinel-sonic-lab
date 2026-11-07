@@ -30,15 +30,16 @@ In the 6-track `composer/bin/live_session.rb` mix (`kick`, `snare`, `hat`, `bass
 ## Generated one-shot drum assets
 
 `samples/` contains stereo PCM16 WAVs rendered at 48kHz through the existing
-SuperCollider SynthDef using `python3 scripts/render_drum_samples.py`.
+SuperCollider SynthDef from `samples/recipes/*.ndjson` with `mise run samples`
+(the `render_nrt` tool; originally `scripts/render_drum_samples.py`).
 No existing preset gains or playback levels were changed. The asset recipe uses
 amp 0.12 (velocity 0.6), with existing drum gains 3.8 / 3.4 / 2.9.
 
 | Asset | Duration (seconds) | Peak (dBFS) | Whole-file RMS (dBFS) |
 |---|---:|---:|---:|
 | Kick | 0.3507 | -7.66 | -16.64 |
-| Snare | 0.3013 | -8.80 | -24.25 |
-| Hat | 0.1813 | -10.53 | -26.86 |
+| Snare | 0.3013 | -8.10 | -24.13 |
+| Hat | 0.1813 | -10.45 | -26.84 |
 
 Measurements include silent tails. Noise-based renders vary slightly on regeneration.
 These assets have individual peak headroom; perceived balance and combined mix
@@ -100,7 +101,8 @@ host before the next listening check.
 ## 2026-11-07 console channel render
 
 After adding H/A trim, Pan, and Fader support, both SynthDefs were regenerated
-with host `sclang`. `python3 tests/check_channel_audio.py` rendered the new
+with host `sclang`. `tests/check_channel_audio.py` (since replaced by
+`core/tests/audio_render_tests.rs`) rendered the new
 definitions with `scsynth -N` at 48 kHz, stereo PCM16. Each synth comparison
 used the same 0.7-second file, C3, velocity-derived `amp = 0.1`,
 `gain = 1.0`, cutoff 1800 Hz, and center pan. The dBFS values cover the whole
@@ -125,7 +127,7 @@ not yet been heard and judged by the user.
 ## 2026-11-07 channel strip render
 
 `synthdefs/channel.scd` was compiled with host `sclang` into
-`channel_strip.scsyndef` and `aux_return.scsyndef`. `tests/check_channel_audio.py`
+`channel_strip.scsyndef` and `aux_return.scsyndef`. The former `tests/check_channel_audio.py`
 now also renders a 200 Hz Sine through the strip (groups and node order as in
 the Rust engine) and compares RMS over 0.3–0.8 s. Source gain and oscillator
 levels did not change; the table above re-measured identically except for the
@@ -143,3 +145,36 @@ usual Noise variation (-24.22 / -41.36 dBFS this run).
 
 The strip adds no make-up gain, so compression lowers level. These are signal
 measurements; the strip has not yet been heard and judged by the user.
+
+## 2026-11-07 Rust NRT render through the live encoders
+
+`tests/check_channel_audio.py` and the Python OSC encoder were replaced by
+`core/tests/audio_render_tests.rs` (`mise run audio-check`). Each check is now
+an NDJSON score that goes through `Scheduler`, `ChannelGraph`, `SampleBuffers`
+and the same OSC encoders as live playback, recorded into a `scsynth -N` score
+by `core/src/nrt.rs` instead of sent over UDP. No SynthDef, gain or level
+changed. Differences from the Python checks:
+
+- Synth files end when the 0.4 s note ends instead of at 0.7 s, so whole-file
+  RMS is higher with identical peaks: Saw -27.37 / -35.71, Sine -21.96 /
+  -27.73, Pulse -23.35 / -30.73 dBFS; Noise varies (about -24.5 / -39 dBFS).
+- Scores cannot express cutoff 0 or 200 Hz, so the strip source is G3
+  (196 Hz) with cutoff 18 kHz, and the bell is centered on 196 Hz.
+- The strip source peaks at 0.2 (velocity 1), so the compressor threshold is
+  -28 dB to keep the Python check's 14 dB overshoot.
+- A closed Fader and send use the protocol floor of -96 dB, not linear 0; the
+  dry output keeps one PCM16 step of residue (-90.3 dBFS peak).
+
+| Check | Result |
+|---|---:|
+| Sample hard left (mono test / kick) | -19.69 / -12.61 dBFS peak, right silent |
+| Bypassed strip vs direct output | within 0.5% |
+| Compressor 4:1, 14 dB over threshold | -9.65 dB |
+| +12 dB H/A into that compressor | +3.00 dB out |
+| Bell +6 dB at 196 Hz / at 5 kHz | +6.00 / +0.01 dB |
+| Aux return with channel Fader at -96 dB | -20.79 dBFS RMS, tail -37.67 dBFS |
+| Strip hard left / center left peak | 1.40–1.42, right silent |
+
+The new tests also fail if scsynth reports `FAILURE IN SERVER`, which the
+Python script would have rendered as silence. These remain signal
+measurements, not a listening check.

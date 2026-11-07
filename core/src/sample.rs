@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -30,6 +31,14 @@ impl SampleAsset {
         let (channels, sample_rate, frames) = metadata;
         Self { path, bytes: bytes.into(), channels, frames, sample_rate }
     }
+
+    /// Interleaved PCM16 samples in file order, for measuring rendered audio.
+    pub fn pcm16_samples(&self) -> Vec<i16> {
+        let data = scan_chunks(&self.bytes).and_then(|scan| scan.data);
+        let data = data.expect("the WAV was validated when the asset was created");
+        let (pairs, _) = self.bytes[data].as_chunks::<2>();
+        pairs.iter().map(|pair| i16::from_le_bytes(*pair)).collect()
+    }
 }
 
 fn invalid_wav(path: &std::path::Path) -> String {
@@ -47,7 +56,7 @@ struct WavScan<'a> {
     bytes: &'a [u8],
     offset: usize,
     format: Option<WavFormat>,
-    data_size: Option<usize>,
+    data: Option<Range<usize>>,
 }
 
 struct Chunk<'a> {
@@ -59,11 +68,16 @@ struct Chunk<'a> {
 
 fn parse_wav(bytes: &[u8]) -> Option<(u16, u32, u32)> {
     validate_wav_header(bytes)?;
+    let scan = scan_chunks(bytes)?;
+    let format = scan.format?;
+    let frames = validate_frames(scan.data?.len(), format)?;
+    Some((format.channels, format.rate, frames))
+}
+
+fn scan_chunks(bytes: &[u8]) -> Option<WavScan<'_>> {
     let mut scan = WavScan::new(bytes);
     scan.scan()?;
-    let format = scan.format?;
-    let frames = validate_frames(scan.data_size?, format)?;
-    Some((format.channels, format.rate, frames))
+    Some(scan)
 }
 
 fn validate_wav_header(bytes: &[u8]) -> Option<()> {
@@ -78,7 +92,7 @@ fn validate_wav_header(bytes: &[u8]) -> Option<()> {
 
 impl<'a> WavScan<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 12, format: None, data_size: None }
+        Self { bytes, offset: 12, format: None, data: None }
     }
 
     fn scan(&mut self) -> Option<()> {
@@ -117,10 +131,10 @@ impl<'a> WavScan<'a> {
     }
 
     fn accept_data(&mut self, chunk: &Chunk<'_>) -> Option<()> {
-        if self.format.is_none() || self.data_size.is_some() {
+        if self.format.is_none() || self.data.is_some() {
             return None;
         }
-        self.data_size = Some(chunk.length);
+        self.data = Some(chunk.start..chunk.end);
         Some(())
     }
 }
@@ -164,7 +178,7 @@ impl WavFormat {
 }
 
 fn validate_frames(size: usize, format: WavFormat) -> Option<u32> {
-    if size == 0 || size % usize::from(format.align) != 0 {
+    if size == 0 || !size.is_multiple_of(usize::from(format.align)) {
         return None;
     }
     let frames = (size / usize::from(format.align)) as u32;

@@ -1,0 +1,3 @@
+{"type":"tempo","bpm":60}
+{"type":"tone","instrument":"analog_bass","oscillator":"sine","cutoff_hz":320.0,"attack_seconds":0.001,"decay_seconds":0.080,"sustain_level":0.0,"release_seconds":0.090,"gain":3.8}
+{"type":"note","instrument":"analog_bass","note":36,"beat":0.0,"duration_beats":0.18,"velocity":0.6}

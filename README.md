@@ -253,9 +253,12 @@ The named-track example has the same eight-note sound as that preview. Compare i
 ```sh
 cargo test --offline --manifest-path core/Cargo.toml
 sh tests/check_spinel.sh
+mise run audio-check   # needs scsynth and generated SynthDefs; no audio device
 ```
 
 The Rust tests need no SuperCollider connection. Scheduling and bar-transition tests do not sleep; the background-worker test waits for an actual channel notification with a bounded timeout. `core/tests/live_tests.rs` covers bar-boundary changes, tempo edits, failed reloads, and Spinel recompilation. The Spinel test actually compiles and runs the compositions, including Sine, Pulse, all three preset choices, melody with chords, 16-step rhythm, and named tracks, then compares their NDJSON output to the checked-in examples. It checks sharp-note conversion, invalid pitch names, invalid step patterns, and invalid track names. Remove `--offline` if Cargo dependencies are not yet cached.
+
+`mise run audio-check` renders NDJSON scores offline with `scsynth -N` through the same scheduler, channel graph, sample buffers and OSC encoders as live playback, then measures the WAVs: oscillator levels, pan law, compressor, bell EQ, pre-Fader Aux with reverb tail, and the drum recipes. These are signal checks, not a listening check. `mise run render -- INPUT OUTPUT.wav [SECONDS]` renders any `.ndjson` or Spinel `.rb` score to a WAV the same way, which is handy for listening without starting the audio server.
 
 ## Troubleshooting
 

@@ -5,7 +5,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use spinel_sonic_lab::mixer::ChannelGraph;
-use spinel_sonic_lab::osc::{GraphClient, Lookups, OscClient, system_time_to_ntp};
+use spinel_sonic_lab::osc::{
+    GraphClient, Lookups, OscClient, SAMPLE_SYNTHDEFS, system_time_to_ntp,
+};
 use spinel_sonic_lab::sample::SampleAsset;
 use spinel_sonic_lab::schedule::{
     PlaybackEvent, PlaybackSound, ScheduledBar, ScheduledNote, Scheduler,
@@ -320,7 +322,7 @@ impl<'a> SamplePlayer<'a> {
 
     fn load_definitions(&mut self) -> Result<(), String> {
         if !self.definitions_loaded {
-            for name in ["sample_mono", "sample_stereo"] {
+            for name in SAMPLE_SYNTHDEFS {
                 let path = self.synthdef_dir.join(format!("{name}.scsyndef"));
                 self.osc.load_synthdef(&path)?;
             }

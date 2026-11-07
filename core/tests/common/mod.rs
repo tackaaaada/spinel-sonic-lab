@@ -1,9 +1,12 @@
 //! Helpers shared by the integration test crates; each crate uses a subset.
 #![allow(dead_code)]
 
+pub mod audio;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use spinel_sonic_lab::model::Score;
 
@@ -46,4 +49,24 @@ pub fn run_cli_with_stdin(args: &[&str], stdin: &str) -> Output {
     let mut child = spawn_cli(args);
     child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
     child.wait_with_output().unwrap()
+}
+
+/// A uniquely named directory under the system temp dir, removed on drop.
+pub struct TempDir(pub PathBuf);
+
+impl TempDir {
+    pub fn create(prefix: &str) -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let count = NEXT.fetch_add(1, Ordering::Relaxed);
+        let name = format!("{prefix}-{}-{count}", std::process::id());
+        let path = std::env::temp_dir().join(name);
+        std::fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }

@@ -83,6 +83,17 @@ have separate `PlayBuf` SynthDefs in `synthdefs/sampler.scd`; `BufRateScale` kee
 original speed and `OffsetOut` preserves sample scheduling offsets. Whole-file
 playback frees the node at its end. This uses SuperCollider standard UGens.
 
+Offline rendering reuses the live path. `nrt.rs` plans a validated score with
+`Scheduler::plan_playback`, prepares `SampleBuffers` and `ChannelGraph` through
+a recording backend, and writes each simultaneous group with the same OSC
+bundle encoder as live playback, using timetags counted from the file start.
+Engine setup sits at time zero and an empty bundle sets the file length (the
+last event end plus any reverb tail, or a fixed length). `nrt.rs` has no file
+or process access; `source.rs::render_nrt` writes the command file, runs
+`scsynth -N`, rejects `FAILURE IN SERVER` logs, and validates the WAV. The
+`render_nrt` binary and `core/tests/audio_render_tests.rs` use this path, so
+the audio checks measure the packets that live playback sends.
+
 Watch preflights candidate engine resources before `LiveScheduler` changes its
 active score. Source failures, invalid WAVs, muted-score errors, and engine load
 failures leave the active composition in place. Buffers from earlier generations

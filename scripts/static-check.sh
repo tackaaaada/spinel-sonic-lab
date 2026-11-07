@@ -5,7 +5,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 supported() {
-    case "$1" in *.py | *.rs | *.rb | *.sh) return 0 ;; *) return 1 ;; esac
+    case "$1" in *.rs | *.rb | *.sh) return 0 ;; *) return 1 ;; esac
 }
 
 source_files() {
@@ -39,17 +39,6 @@ normalize_files() {
         [[ -z "$rel" ]] || output+=("$rel")
     done
     return 0
-}
-
-check_python() {
-    local file status=0
-    local -a files=()
-    collect_files files py "$@"
-    if (("${#files[@]}")); then
-        ruff check --no-cache "${files[@]}" || status=1
-        ty check "${files[@]}" || status=1
-    fi
-    return "$status"
 }
 
 check_rust() {
@@ -115,7 +104,7 @@ check_files() {
     local status=0 check
     local -a files=()
     normalize_files files "$@" || return
-    for check in check_python check_rust check_ruby check_shell check_function_quality; do
+    for check in check_rust check_ruby check_shell check_function_quality; do
         "$check" "${files[@]}" || status=1
     done
     return "$status"

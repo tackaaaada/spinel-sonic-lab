@@ -6,6 +6,7 @@ use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::Score;
+use crate::nrt::NrtScore;
 use crate::sample::SampleAsset;
 use crate::schedule::parse_and_validate_score;
 
@@ -184,4 +185,34 @@ pub fn with_sample_snapshot<T>(
 ) -> Result<T, String> {
     let snapshot = write_snapshot(asset)?;
     load(&snapshot.0)
+}
+
+/// Renders NRT commands with `scsynth -N` to 48kHz stereo PCM16 at `output` and
+/// returns the validated WAV. The command file sits beside `output` until scsynth exits.
+pub fn render_nrt(commands: &NrtScore, output: &Path) -> Result<SampleAsset, String> {
+    let score = output.with_extension("osc");
+    fs::write(&score, commands.bytes()).map_err(|e| format!("NRT score write failed: {e}"))?;
+    let run = scsynth_nrt_output(&score, output);
+    let _ = fs::remove_file(&score);
+    ensure_render_success(&run?)?;
+    let bytes = fs::read(output).map_err(|e| format!("rendered WAV read failed: {e}"))?;
+    SampleAsset::from_wav(output.to_path_buf(), bytes)
+}
+
+fn scsynth_nrt_output(score: &Path, output: &Path) -> Result<Output, String> {
+    Command::new("scsynth")
+        .arg("-N")
+        .args([score.as_os_str(), "_".as_ref(), output.as_os_str()])
+        .args(["48000", "WAV", "int16", "-i", "0", "-o", "2"])
+        .output()
+        .map_err(|error| format!("failed to invoke scsynth: {error}"))
+}
+
+/// scsynth exits successfully even when a command such as `/s_new` fails.
+fn ensure_render_success(run: &Output) -> Result<(), String> {
+    let log = String::from_utf8_lossy(&run.stdout);
+    if run.status.success() && !log.contains("FAILURE IN SERVER") {
+        return Ok(());
+    }
+    Err(format!("scsynth NRT render failed: {}", command_error_detail(run)))
 }

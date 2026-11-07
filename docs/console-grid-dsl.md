@@ -152,7 +152,7 @@ after its last source and effect tail, avoiding a cut at the boundary.
    channel declarations. User listening on the host remains pending.
 4. **Done in code, NRT and deterministic tests (2026-11-07):** persistent
    channel graph (`core/src/mixer.rs`), compressor, bell EQ, named Aux send and
-   reverb return. `tests/check_channel_audio.py` verifies bypass identity,
+   reverb return. `core/tests/audio_render_tests.rs` (`mise run audio-check`) verifies bypass identity,
    gain reduction, H/A before the compressor, bell boost on/off frequency,
    pre-Fader Aux tap with return tail, and strip pan law.
 5. **Done except listening:** `composer/bin/emit_console_strip.rb` combines

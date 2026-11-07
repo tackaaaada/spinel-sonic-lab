@@ -6,9 +6,6 @@ rust = "1.99.1"
 go = "1.27.3"
 "go:github.com/richardwooding/codemetrics/cmd/codemetrics" = "v0.8.0"
 "go:github.com/miguelbravo7/code-inspector/cmd/code-inspector" = "v0.2.0"
-uv = "0.13.6"
-ruff = "0.16.7"
-ty = "0.0.80"
 shfmt = "3.14.1"
 
 [env]
@@ -16,7 +13,7 @@ SPINEL_BIN = "{{config_root}}/../.tools/spinel/bin/spinel"
 
 [tasks.test]
 description = "Run Rust and actual Spinel composition tests"
-run = ["cargo test --offline --manifest-path core/Cargo.toml", "sh tests/check_spinel.sh", "python3 tests/check_samples.py", "python3 tests/check_render_drum_samples.py"]
+run = ["cargo test --offline --manifest-path core/Cargo.toml", "sh tests/check_spinel.sh"]
 
 [tasks.build]
 description = "Build the Rust player"
@@ -31,7 +28,7 @@ run = ["sclang synthdefs/analog_bass.scd", "sclang synthdefs/sampler.scd", "scla
 description = "Check the Omarchy music development prerequisites"
 run = """
 set -eu
-for tool in ruby cargo cc make sclang scsynth pactl python3; do
+for tool in ruby cargo cc make sclang scsynth pactl jq; do
   command -v "$tool" >/dev/null || { echo "Missing tool: $tool"; exit 1; }
 done
 test -x "$SPINEL_BIN" || { echo "Spinel is not built: $SPINEL_BIN"; exit 1; }
@@ -68,13 +65,19 @@ depends = ["build", "synthdef"]
 run = "core/target/debug/spinel-sonic-lab --watch composer/bin/live_session.rb"
 
 [tasks.samples]
-description = "Render kick, snare and hat WAV assets with SuperCollider NRT"
+description = "Render kick, snare and hat WAV assets from samples/recipes with SuperCollider NRT"
 depends = ["synthdef"]
-run = ["python3 scripts/render_drum_samples.py", "python3 tests/check_samples.py"]
+run = [
+  "cargo build --offline --manifest-path core/Cargo.toml --bin render_nrt",
+  "core/target/debug/render_nrt samples/recipes/kick.ndjson samples/kick.wav 0.35",
+  "core/target/debug/render_nrt samples/recipes/snare.ndjson samples/snare.wav 0.30",
+  "core/target/debug/render_nrt samples/recipes/hat.ndjson samples/hat.wav 0.18",
+  "cargo test --offline --manifest-path core/Cargo.toml --test drum_asset_tests",
+]
 
 [tasks.check-samples]
 description = "Check generated WAV format, onset, tail and headroom"
-run = "python3 tests/check_samples.py"
+run = "cargo test --offline --manifest-path core/Cargo.toml --test drum_asset_tests -- --nocapture"
 
 [tasks.play-samples]
 description = "Play four bars of sampled drums and synth bass; requires mise run audio"
@@ -115,6 +118,16 @@ run = "core/target/debug/spinel-sonic-lab --watch composer/bin/emit_console_stri
 description = "Live edit sampled drums and bass on bar boundaries"
 depends = ["build", "synthdef"]
 run = "core/target/debug/spinel-sonic-lab --watch composer/bin/emit_samples.rb"
+[tasks.audio-check]
+description = "Render scores through the live encoders with scsynth NRT and measure levels, pan, strips and returns"
+depends = ["synthdef"]
+run = "cargo test --offline --manifest-path core/Cargo.toml --test audio_render_tests -- --ignored --nocapture --test-threads 1"
+
+[tasks.render]
+description = "Render a score offline to WAV: mise run render -- INPUT OUTPUT.wav [SECONDS]"
+depends = ["synthdef"]
+run = "cargo run --offline --quiet --manifest-path core/Cargo.toml --bin render_nrt --"
+
 [tasks.static-check]
 description = "Run this project's language-specific static analyzers"
 run = "bash scripts/static-check.sh all"

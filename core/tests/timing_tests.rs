@@ -1,9 +1,13 @@
+mod common;
+
 use spinel_sonic_lab::osc::system_time_to_ntp;
 use std::fs;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime};
+
+use common::TempDir;
 
 const NTP_SECOND: u64 = 1 << 32;
 const SYNCED: &[u8] = b"/synced\0,i\0\0\0\0\0\x01";
@@ -177,23 +181,6 @@ impl SampleExchange {
         assert!(now_ntp() >= self.stamp.unwrap() + length);
         self.server.reply(&buffer_done("/b_free"), peer);
         self.freed = true;
-    }
-}
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn create(prefix: &str) -> Self {
-        let name = format!("{prefix}-{}-{}", std::process::id(), now_ntp());
-        let path = std::env::temp_dir().join(name);
-        fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
     }
 }
 

@@ -282,14 +282,11 @@ done
 
 "$SPINEL_BIN" tests/sample_events.rb -o "$tmpdir/sample_events"
 "$tmpdir/sample_events" >"$tmpdir/sample_events.ndjson"
-python3 - "$tmpdir/sample_events.ndjson" <<'PY_CHECK'
-import json, sys
-with open(sys.argv[1]) as f:
-    events = [json.loads(line) for line in f]
-assert events[1]['path'] == 'a path/quote"and\\slash.wav'
-assert events[2]['type'] == 'sample_note'
-assert events[2]['beat'] == 0
-PY_CHECK
+if ! jq -se '.[1].path == "a path/quote\"and\\slash.wav" and .[2].type == "sample_note" and .[2].beat == 0' \
+    "$tmpdir/sample_events.ndjson" >/dev/null; then
+    echo "sample path escaping or sample_note emission changed" >&2
+    exit 1
+fi
 for invalid in bad_name bad_path bad_pattern; do
     if "$tmpdir/sample_events" "$invalid" >"$tmpdir/invalid_sample.ndjson" 2>"$tmpdir/invalid_sample.log"; then
         echo "invalid sample unexpectedly succeeded: $invalid" >&2

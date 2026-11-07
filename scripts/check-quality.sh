@@ -34,8 +34,8 @@ check_coverage() {
 }
 
 measured_sources() {
-    find core composer scripts tests -type d \( -name target -o -name __pycache__ \) -prune -o \
-        -type f \( -name '*.rs' -o -name '*.py' -o -name '*.rb' \) -print
+    find core composer scripts tests -type d -name target -prune -o \
+        -type f \( -name '*.rs' -o -name '*.rb' \) -print
 }
 
 grade_functions() {

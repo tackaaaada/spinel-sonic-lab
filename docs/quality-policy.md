@@ -1,9 +1,9 @@
 # Source quality checks
 
-The existing `mise run static-check` task checks Rust, Python, Ruby, and Shell
-with their language-specific analyzers. Rust uses rustfmt and Clippy; Python
-uses Ruff and ty; Ruby uses `ruby -c` and RuboCop; Shell uses ShellCheck and
-shfmt. Indentation is four spaces in all four languages. Ruby's RuboCop and
+The existing `mise run static-check` task checks Rust, Ruby, and Shell with
+their language-specific analyzers. Rust uses rustfmt and Clippy; Ruby uses
+`ruby -c` and RuboCop; Shell uses ShellCheck and shfmt. Indentation is four
+spaces in all three languages. Ruby's RuboCop and
 Shell's shfmt checks require `mise install` to provide their pinned tools.
 
 ## Function limits
@@ -42,7 +42,6 @@ checks back up the parser above and report problems inside the editor:
 | Language | Setting | Limit |
 | --- | --- | --- |
 | Rust | `clippy::too_many_lines` (denied in `core/Cargo.toml`, threshold in `core/clippy.toml`) | 10 code lines; Clippy skips blank and comment lines |
-| Python | Ruff `C90` (`ruff.toml`) | McCabe complexity 20 |
 | Ruby | RuboCop `Metrics/MethodLength` and `Metrics/CyclomaticComplexity` (`.rubocop.yml`) | 8 body lines (10 with `def`/`end`); complexity 20 |
 | Shell | none available | covered by `check-quality.sh` |
 

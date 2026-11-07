@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use common::audio::pcm16_wav;
 use common::{
     assert_close, assert_rejects_edits, contains, examples_dir, parse, run_cli_with_stdin,
 };
@@ -512,4 +513,14 @@ fn sample_mix_gives_kick_its_own_attack() {
     assert!(bass.iter().all(|n| n.tone.oscillator == Oscillator::Saw));
     assert!(bass.iter().all(|n| n.tone.attack_seconds <= 0.003));
     assert_eq!(kick_beats(&score), [0.0, 1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn pcm16_samples_are_read_interleaved_from_the_data_chunk() {
+    let samples = [1, -2, i16::MAX, i16::MIN];
+    // A LIST chunk before `data` keeps the samples away from byte 44.
+    let wav = pcm16_wav(2, &samples, b"LIST\x03\x00\x00\x00abc\x00");
+    let asset = SampleAsset::from_wav("list.wav".into(), wav).unwrap();
+    assert_eq!(asset.frames, 2);
+    assert_eq!(asset.pcm16_samples(), samples);
 }
