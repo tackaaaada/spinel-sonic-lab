@@ -18,6 +18,14 @@ The WAV samples and audio previews are stored with Git LFS. After cloning, run
 file beginning with `version https://git-lfs.github.com/spec/v1` is an LFS
 pointer, not playable WAV audio.
 
+Activate the project hooks with `git config core.hooksPath .githooks`. That
+setting replaces Git LFS's own hooks, so the project's `pre-push` runs the
+static check and then `git lfs pre-push`; without it, a pushed WAV would reach
+GitHub as a pointer with no audio. Git LFS writes its own hooks into
+`.githooks` only when `pre-push` is missing there, such as after checking out a
+commit from before the hooks existed; delete those untracked copies.
+`bash tests/check_git_hooks.sh` checks this with a local remote.
+
 ## Build Spinel
 
 Follow the [official Spinel build instructions](https://github.com/matz/spinel). Spinel is a source-built AOT compiler, not a Gem:

@@ -2,4 +2,12 @@
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
-bash scripts/static-check.sh all
+# Git lists the pushed refs on stdin; Git LFS needs them to upload samples.
+refs="$(cat)"
+bash scripts/static-check.sh all </dev/null
+# core.hooksPath replaces Git LFS's own pre-push hook, so call it here.
+command -v git-lfs >/dev/null || {
+    printf 'Git LFS is required to push samples/*.wav; install git-lfs.\n' >&2
+    exit 2
+}
+printf '%s\n' "$refs" | git lfs pre-push "$@"
