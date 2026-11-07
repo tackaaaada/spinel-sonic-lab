@@ -13,7 +13,7 @@ SPINEL_BIN = "{{config_root}}/../.tools/spinel/bin/spinel"
 
 [tasks.test]
 description = "Run Rust and actual Spinel composition tests"
-run = ["cargo test --offline --manifest-path core/Cargo.toml", "sh tests/check_spinel.sh"]
+run = ["cargo test --offline --manifest-path core/Cargo.toml", "sh tests/check_spinel.sh", "bash tests/check_git_hooks.sh"]
 
 [tasks.build]
 description = "Build the Rust player"
