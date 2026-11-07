@@ -111,10 +111,6 @@ impl GraphBackend for &Recorder<'_> {
     fn free_node(&self, _node: i32) -> Result<(), String> {
         Ok(())
     }
-
-    fn stop(&self) -> Result<(), String> {
-        Ok(())
-    }
 }
 
 /// The live engine's buffer and channel-graph preparation, recorded instead of sent.

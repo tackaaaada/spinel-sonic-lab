@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime};
 
-use common::TempDir;
+use common::{TempDir, contains};
 
 const NTP_SECOND: u64 = 1 << 32;
 const SYNCED: &[u8] = b"/synced\0,i\0\0\0\0\0\x01";
@@ -70,11 +70,25 @@ impl FakeServer {
         }
     }
 
-    fn answer_sync(&mut self) {
+    /// Answers a `/sync`, alone or closing a stamped release bundle; returns the
+    /// bundle's timetag for the latter. Like scsynth, a stamped bundle is answered
+    /// only at its time, and must arrive before it rather than late.
+    fn answer_sync(&mut self) -> Option<u64> {
         let (packet, peer) = self.recv();
-        assert_eq!(osc_address(&packet), "/sync");
+        assert!(contains(&packet, b"/sync\0"), "expected a sync: {packet:?}");
+        let stamp = (osc_address(&packet) == "#bundle").then(|| bundle_time(&packet));
+        stamp.into_iter().for_each(run_at_stamp);
         self.reply(SYNCED, peer);
+        stamp
     }
+}
+
+/// Waits for a stamped bundle's time, as scsynth does, after checking that it
+/// arrived with the notes' lead rather than late.
+fn run_at_stamp(due: u64) {
+    let ahead = due.saturating_sub(now_ntp());
+    assert!(ahead > NTP_SECOND / 10, "the final release needs the notes' lead");
+    std::thread::sleep(Duration::from_nanos(((u128::from(ahead) * 1_000_000_000) >> 32) as u64));
 }
 
 fn check_bass_timing(flags: &[&str], offsets_ms: &[u64], final_syncs: usize) {
@@ -82,9 +96,16 @@ fn check_bass_timing(flags: &[&str], offsets_ms: &[u64], final_syncs: usize) {
     let child = spawn_bass(&server, flags);
     let received = collect_bundle_times(&mut server, offsets_ms.len());
     // Answer the final /sync messages, which may follow the final audible note.
-    (0..final_syncs).for_each(|_| server.answer_sync());
+    let release = (0..final_syncs).filter_map(|_| server.answer_sync()).last();
     assert_success(child);
     assert_bass_timing(&received, offsets_ms);
+    assert_released_after_last_note(&received, release);
+}
+
+/// The last bass note lasts a quarter second.
+fn assert_released_after_last_note(received: &[(u64, u64)], release: Option<u64>) {
+    let last_end = received.last().unwrap().0 + NTP_SECOND / 4;
+    assert!(release.expect("a stamped final release") >= last_end, "released too early");
 }
 
 fn spawn_bass(server: &FakeServer, flags: &[&str]) -> Child {
@@ -152,9 +173,17 @@ impl SampleExchange {
         match osc_address(&packet) {
             "/d_load" | "/sync" => self.server.acknowledge(&packet, peer),
             "/b_allocRead" => self.load(&packet, peer),
-            "#bundle" => self.schedule(&packet),
-            "/b_free" => self.free(peer),
+            "#bundle" => self.answer_bundle(&packet, peer),
+            "/b_free" => panic!("freed at once; a lagging server would free it under its note"),
             _ => panic!("unexpected OSC packet: {packet:?}"),
+        }
+    }
+
+    fn answer_bundle(&mut self, packet: &[u8], peer: SocketAddr) {
+        if contains(packet, b"/b_free\0") {
+            self.free_scheduled(packet, peer);
+        } else {
+            self.schedule(packet);
         }
     }
 
@@ -176,10 +205,15 @@ impl SampleExchange {
         self.stamp = Some(due);
     }
 
-    fn free(&mut self, peer: SocketAddr) {
+    /// The free is stamped on the server timeline after the whole file has played,
+    /// so it follows the note even when scsynth's clock lags. Its bundle carries
+    /// the closing `/sync`, so the CLI exits only once the server has run it.
+    fn free_scheduled(&mut self, packet: &[u8], peer: SocketAddr) {
         let length = (16832_u64 << 32) / 48000;
-        assert!(now_ntp() >= self.stamp.unwrap() + length);
-        self.server.reply(&buffer_done("/b_free"), peer);
+        assert!(bundle_time(packet) >= self.stamp.unwrap() + length);
+        assert!(contains(packet, &0_i32.to_be_bytes()));
+        assert!(contains(packet, b"/sync\0"), "the CLI must wait for the server to free it");
+        self.server.reply(SYNCED, peer);
         self.freed = true;
     }
 }

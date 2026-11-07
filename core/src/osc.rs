@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -304,14 +305,40 @@ impl crate::sampler::SampleBackend for &OscClient {
             self.wait_done("/b_allocRead", Some(id))
         })
     }
+    /// Frees a buffer that never played, before any note can use it.
     fn free(&self, id: i32) -> Result<(), String> {
-        let mut packet = Vec::new();
-        osc_string(&mut packet, "/b_free");
-        osc_string(&mut packet, ",i");
-        osc_i32(&mut packet, id);
-        self.send(&packet)?;
+        self.send(&encode_b_free(id))?;
         self.wait_done("/b_free", Some(id))
     }
+}
+
+fn encode_b_free(id: i32) -> Vec<u8> {
+    let mut packet = Vec::new();
+    osc_string(&mut packet, "/b_free");
+    osc_string(&mut packet, ",i");
+    osc_i32(&mut packet, id);
+    packet
+}
+
+/// A buffer free stamped at `timetag`; scsynth runs it in timetag order with notes.
+pub fn encode_buffer_release(timetag: u64, id: i32) -> Vec<u8> {
+    encode_messages_bundle(timetag, &[encode_b_free(id)])
+}
+
+/// A node or group free stamped at `timetag`.
+pub fn encode_node_release(timetag: u64, node: i32) -> Vec<u8> {
+    encode_messages_bundle(timetag, &[encode_n_free(&[node])])
+}
+
+/// Every remaining free at `timetag`, then `/sync`: scsynth answers only after
+/// running them on its own clock.
+pub fn encode_final_release(timetag: u64, buffers: &[i32], nodes: &[i32]) -> Vec<u8> {
+    let mut messages: Vec<Vec<u8>> = buffers.iter().map(|id| encode_b_free(*id)).collect();
+    if !nodes.is_empty() {
+        messages.push(encode_n_free(nodes));
+    }
+    messages.push(encode_sync(1));
+    encode_messages_bundle(timetag, &messages)
 }
 
 pub fn encode_alloc_read(id: i32, path: &str) -> Vec<u8> {
@@ -361,12 +388,65 @@ impl OscClient {
         self.send(&encode_routed_playback_bundle(timetag, events, lookups)?)
     }
 
+    /// Schedules a buffer free without waiting: a lagging server replies only later.
+    pub fn release_buffer(&self, timetag: u64, id: i32) -> EncodeResult<()> {
+        self.send(&encode_buffer_release(timetag, id))
+    }
+
+    pub fn release_node(&self, timetag: u64, node: i32) -> EncodeResult<()> {
+        self.send(&encode_node_release(timetag, node))
+    }
+
+    /// Sends the last frees and waits until the server has run them, so a later
+    /// run cannot lose its new nodes or buffers to a free still pending here.
+    pub fn release_and_confirm(
+        &self,
+        timetag: u64,
+        buffers: &[i32],
+        nodes: &[i32],
+    ) -> EncodeResult<()> {
+        self.send(&encode_final_release(timetag, buffers, nodes))?;
+        self.wait_for_sync_within(FINAL_RELEASE_LIMIT)
+    }
+
+    /// Unlike `verify_commands`, read timeouts are retried until `limit`.
+    fn wait_for_sync_within(&self, limit: Duration) -> EncodeResult<()> {
+        let deadline = std::time::Instant::now() + limit;
+        while std::time::Instant::now() < deadline {
+            if let Some(result) = self.sync_reply()? {
+                return result;
+            }
+        }
+        Err("scsynth did not confirm the final release".to_owned())
+    }
+
+    /// The next `/synced` or `/fail`; `None` for other packets or a read timeout.
+    fn sync_reply(&self) -> EncodeResult<Option<EncodeResult<()>>> {
+        let mut buffer = [0_u8; 2048];
+        match self.socket.recv(&mut buffer) {
+            Ok(size) => Ok(sync_result(osc_address(&buffer[..size]))),
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => Ok(None),
+            Err(e) => Err(format!("final release response failed: {e}")),
+        }
+    }
+
     /// Strip and return control changes, applied at `timetag` (a bar boundary).
     pub fn set_controls_bundle(&self, timetag: u64, updates: &[NodeUpdate]) -> EncodeResult<()> {
         if updates.is_empty() {
             return Ok(());
         }
         self.send(&encode_node_updates(timetag, updates))
+    }
+}
+
+/// How long a lagging server may take to reach the final release.
+const FINAL_RELEASE_LIMIT: Duration = Duration::from_secs(30);
+
+fn sync_result(address: Option<&str>) -> Option<EncodeResult<()>> {
+    match address {
+        Some("/synced") => Some(Ok(())),
+        Some("/fail") => Some(Err("scsynth rejected the final release".to_owned())),
+        _ => None,
     }
 }
 
@@ -543,11 +623,6 @@ impl GraphBackend for GraphClient<'_> {
 
     fn free_node(&self, node: i32) -> EncodeResult<()> {
         self.osc.send(&encode_n_free(&[node]))
-    }
-
-    fn stop(&self) -> EncodeResult<()> {
-        self.osc.send(&encode_n_free(&[STRIP_GROUP, RETURN_GROUP]))?;
-        self.osc.verify_commands()
     }
 }
 

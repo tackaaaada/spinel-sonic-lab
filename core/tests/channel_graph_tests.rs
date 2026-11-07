@@ -1,7 +1,10 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-use spinel_sonic_lab::mixer::{ChannelGraph, GraphBackend, NodeSpec, NodeUpdate, REVERB_TAIL};
+use spinel_sonic_lab::mixer::{
+    ChannelGraph, GraphBackend, NodeRelease, NodeSpec, NodeUpdate, RETURN_GROUP, REVERB_TAIL,
+    STRIP_GROUP,
+};
 use spinel_sonic_lab::model::Score;
 use spinel_sonic_lab::osc::{Lookups, RouteResolver, encode_routed_playback_bundle};
 use spinel_sonic_lab::schedule::{PlaybackEvent, PlaybackSound, Scheduler};
@@ -56,9 +59,6 @@ impl GraphBackend for &FakeBackend {
     }
     fn free_node(&self, node: i32) -> Result<(), String> {
         self.record(format!("free {node}"))
-    }
-    fn stop(&self) -> Result<(), String> {
-        self.record("stop".to_owned())
     }
 }
 
@@ -172,13 +172,17 @@ fn failed_preparation_keeps_the_active_graph() {
     assert!(log.last().unwrap().starts_with("free "), "{log:?}");
 }
 
+/// Freeing a group frees its nodes; the return's reverb tail is the last use.
 #[test]
-fn finish_frees_every_node() {
+fn releasing_all_frees_both_groups_after_the_last_use() {
     let backend = FakeBackend::default();
-    prepared(&backend, CONSOLE).finish().unwrap();
-    let log = backend.log();
-    assert_eq!(log.iter().filter(|l| l.starts_with("free")).count(), 2);
-    assert_eq!(log.last().unwrap(), "stop");
+    let mut graph = prepared(&backend, CONSOLE);
+    graph.mark_used("lowtrack", Duration::from_secs(2));
+    let after = Duration::from_secs(2) + REVERB_TAIL;
+    let groups = [STRIP_GROUP, RETURN_GROUP].map(|node| NodeRelease { node, after });
+    assert_eq!(graph.release_all(), groups);
+    assert!(graph.release_all().is_empty(), "the graph starts again on the next prepare");
+    assert!(!backend.log().iter().any(|l| l.starts_with("free")), "freed by the engine");
 }
 
 fn console_strip_score() -> Score {
@@ -283,22 +287,40 @@ fn reload_reuses_nodes_and_stages_control_changes_for_the_bar_boundary() {
 
 type Graph<'b> = ChannelGraph<&'b FakeBackend>;
 
-/// Prunes at each time in turn; returns how many nodes had been freed by then.
-fn freed_by(graph: &mut Graph<'_>, backend: &FakeBackend, seconds: [u64; 3]) -> [usize; 3] {
-    let before = backend.entries();
-    seconds.map(|s| {
-        graph.prune(Duration::from_secs(s)).unwrap();
-        backend.entries() - before
-    })
+/// Release times of the nodes finished by `seconds`.
+fn released_at(graph: &mut Graph<'_>, seconds: Duration) -> Vec<Duration> {
+    graph.release_finished(seconds).iter().map(|release| release.after).collect()
+}
+
+/// The console after `lowtrack`, last used until 2 s, is removed by a reload.
+fn without_lowtrack(backend: &FakeBackend) -> Graph<'_> {
+    let mut graph = prepared(backend, CONSOLE);
+    graph.mark_used("lowtrack", Duration::from_secs(2));
+    graph.prepare(&console().without_track("lowtrack").unwrap()).unwrap();
+    assert!(graph.route_bus("lowtrack").is_err());
+    graph
 }
 
 #[test]
 fn removed_strip_and_return_retire_after_their_tails() {
     let backend = FakeBackend::default();
-    let mut graph = prepared(&backend, CONSOLE);
-    graph.mark_used("lowtrack", Duration::from_secs(2));
-    graph.prepare(&console().without_track("lowtrack").unwrap()).unwrap();
-    assert!(graph.route_bus("lowtrack").is_err());
-    // The strip waits for its source tail; the return also keeps the reverb tail.
-    assert_eq!(freed_by(&mut graph, &backend, [1, 2, 2 + REVERB_TAIL.as_secs()]), [0, 1, 2]);
+    let mut graph = without_lowtrack(&backend);
+    // The strip waits for its source; the return also keeps the reverb tail.
+    let (two, entries) = (Duration::from_secs(2), backend.entries());
+    assert!(released_at(&mut graph, Duration::from_secs(1)).is_empty());
+    assert_eq!(released_at(&mut graph, two), [two]);
+    assert_eq!(released_at(&mut graph, two + REVERB_TAIL), [two + REVERB_TAIL]);
+    assert_eq!(backend.entries(), entries, "the engine schedules the frees");
+}
+
+#[test]
+fn a_released_strip_bus_is_not_reused_by_the_next_new_strip() {
+    let backend = FakeBackend::default();
+    let old_bus = prepared(&backend, CONSOLE).route_bus("lowtrack").unwrap();
+    let mut graph = without_lowtrack(&backend);
+    let _ = graph.release_finished(Duration::from_secs(60));
+    let renamed = CONSOLE.replace("lowtrack", "newtrack");
+    graph.prepare(&Score::parse_ndjson(&renamed).unwrap()).unwrap();
+    // A lagging server may still run the old strip on that bus.
+    assert_ne!(graph.route_bus("newtrack").unwrap(), old_bus);
 }

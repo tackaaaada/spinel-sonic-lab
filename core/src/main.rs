@@ -247,9 +247,17 @@ impl<'a> Engine<'a> {
         self.graph.prepare(score)
     }
 
-    fn prune(&mut self, now: Duration, assets: &[SampleAsset]) -> Result<(), String> {
-        self.samples.buffers.prune(now, assets)?;
-        self.graph.prune(now)
+    /// Frees buffers and retired nodes whose sounds have ended, each stamped on
+    /// the server timeline after its last use, keeping the assets in `keep`.
+    fn prune(&mut self, clock: &PlaybackClock, keep: &[SampleAsset]) -> Result<(), String> {
+        let now = clock.audible_elapsed();
+        for release in self.samples.buffers.release_finished(now, keep) {
+            self.osc.release_buffer(clock.release_timetag(release.after)?, release.id)?;
+        }
+        for release in self.graph.release_finished(now) {
+            self.osc.release_node(clock.release_timetag(release.after)?, release.node)?;
+        }
+        Ok(())
     }
 
     /// Sends reloaded strip and return controls to change exactly at `timetag`.
@@ -290,12 +298,17 @@ impl<'a> Engine<'a> {
         self.osc.play_events_bundle(timetag, group, &lookups)
     }
 
-    /// Waits for source and return tails before releasing the graph.
+    /// Releases every buffer and node stamped after the last sound, then waits
+    /// until the server has run that release on its own clock.
     fn finish(&mut self, clock: &PlaybackClock, result: Result<(), String>) -> Result<(), String> {
-        sleep_until(clock.audible_start, self.end.saturating_add(self.graph.tail()))?;
+        sleep_until(clock.dispatch_start, self.end.saturating_add(self.graph.tail()))?;
         result?;
-        self.graph.finish()?;
-        self.osc.verify_commands()
+        let (buffers, nodes) = (self.samples.buffers.release_all(), self.graph.release_all());
+        let last = buffers.iter().map(|r| r.after).chain(nodes.iter().map(|r| r.after));
+        let timetag = clock.release_timetag(last.fold(self.end, Duration::max))?;
+        let buffer_ids: Vec<i32> = buffers.iter().map(|r| r.id).collect();
+        let node_ids: Vec<i32> = nodes.iter().map(|r| r.node).collect();
+        self.osc.release_and_confirm(timetag, &buffer_ids, &node_ids)
     }
 }
 
@@ -421,8 +434,7 @@ impl<'a> WatchRunner<'a> {
     }
 
     fn prune(&mut self) -> Result<(), String> {
-        let now = Instant::now().saturating_duration_since(self.clock.audible_start);
-        self.engine.prune(now, &self.watcher.sample_assets())
+        self.engine.prune(&self.clock, &self.watcher.sample_assets())
     }
 
     fn next_bar(&mut self) -> Result<ScheduledBar, String> {
@@ -483,6 +495,9 @@ fn print_sample_note(event: &PlaybackEvent, name: &str) {
 // Runtime clock bridge: musical offsets stay independent of OSC and wall time.
 const DISPATCH_LEAD: Duration = Duration::from_millis(200);
 
+/// Frees land after the control block that plays a resource's last sample.
+const RELEASE_MARGIN: Duration = Duration::from_millis(20);
+
 struct PlaybackClock {
     dispatch_start: Instant,
     audible_start: Instant,
@@ -505,6 +520,16 @@ impl PlaybackClock {
     fn timetag(&self, offset: Duration) -> Result<u64, String> {
         let time = self.wall_start.checked_add(offset).ok_or(OUT_OF_RANGE)?;
         Ok(system_time_to_ntp(time))
+    }
+
+    /// When to free a resource last used until `after`.
+    fn release_timetag(&self, after: Duration) -> Result<u64, String> {
+        self.timetag(after.saturating_add(RELEASE_MARGIN))
+    }
+
+    /// Playback time heard so far.
+    fn audible_elapsed(&self) -> Duration {
+        Instant::now().saturating_duration_since(self.audible_start)
     }
 }
 

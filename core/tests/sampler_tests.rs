@@ -11,9 +11,9 @@ use common::{
     assert_close, assert_rejects_edits, contains, examples_dir, parse, run_cli_with_stdin,
 };
 use spinel_sonic_lab::model::{Oscillator, Score};
-use spinel_sonic_lab::osc::encode_playback_bundle;
+use spinel_sonic_lab::osc::{encode_buffer_release, encode_playback_bundle};
 use spinel_sonic_lab::sample::SampleAsset;
-use spinel_sonic_lab::sampler::{SampleBackend, SampleBuffers};
+use spinel_sonic_lab::sampler::{BufferRelease, SampleBackend, SampleBuffers};
 use spinel_sonic_lab::schedule::{
     LiveScheduler, PlaybackEvent, PlaybackSound, ScheduledBar, Scheduler, midi_to_frequency,
 };
@@ -189,10 +189,20 @@ fn sample_buffers_stay_loaded_until_their_last_reserved_end() {
     let kick = kick_asset("kick.wav");
     let mut pool = kick_pool(&FakeSampleBackend::default());
     pool.mark_used(&kick, Duration::from_secs(3)).unwrap();
-    pool.prune(Duration::from_secs(2), &[]).unwrap();
+    assert!(pool.release_finished(Duration::from_secs(2), &[]).is_empty());
     assert_eq!(pool.buffer_id(&kick).unwrap(), 0);
-    pool.prune(Duration::from_secs(3), &[]).unwrap();
+    let _ = pool.release_finished(Duration::from_secs(3), &[]);
     assert!(pool.buffer_id(&kick).is_err());
+}
+
+#[test]
+fn finished_buffers_are_released_after_their_last_use_without_freeing_now() {
+    let backend = FakeSampleBackend::default();
+    let (kick, mut pool) = (kick_asset("kick.wav"), kick_pool(&backend));
+    pool.mark_used(&kick, Duration::from_secs(3)).unwrap();
+    let released = pool.release_finished(Duration::from_secs(4), &[]);
+    assert_eq!(released, [BufferRelease { id: 0, after: Duration::from_secs(3) }]);
+    assert_eq!(*backend.0.borrow(), ["load 0"], "the engine schedules the free");
 }
 
 #[test]
@@ -523,4 +533,35 @@ fn pcm16_samples_are_read_interleaved_from_the_data_chunk() {
     let asset = SampleAsset::from_wav("list.wav".into(), wav).unwrap();
     assert_eq!(asset.frames, 2);
     assert_eq!(asset.pcm16_samples(), samples);
+}
+
+#[test]
+fn releasing_all_buffers_keeps_each_last_use_and_empties_the_pool() {
+    let backend = FakeSampleBackend::default();
+    let (kick, mut pool) = (kick_asset("kick.wav"), kick_pool(&backend));
+    pool.mark_used(&kick, Duration::from_secs(5)).unwrap();
+    assert_eq!(pool.release_all(), [BufferRelease { id: 0, after: Duration::from_secs(5) }]);
+    assert!(pool.buffer_id(&kick).is_err());
+    drop(pool);
+    assert_eq!(*backend.0.borrow(), ["load 0"], "nothing is left to free at once on drop");
+}
+
+#[test]
+fn buffer_releases_are_stamped_bundles_holding_one_b_free() {
+    let mut expected = b"#bundle\0".to_vec();
+    expected.extend_from_slice(&0x1_8000_0000_u64.to_be_bytes());
+    expected.extend_from_slice(&16_i32.to_be_bytes());
+    expected.extend_from_slice(b"/b_free\0,i\0\0");
+    expected.extend_from_slice(&7_i32.to_be_bytes());
+    assert_eq!(encode_buffer_release(0x1_8000_0000, 7), expected);
+}
+
+#[test]
+fn a_released_buffer_id_is_not_reused_by_the_next_load() {
+    let backend = FakeSampleBackend::default();
+    let mut pool = kick_pool(&backend);
+    assert_eq!(pool.release_finished(Duration::ZERO, &[]).len(), 1);
+    pool.prepare([&kick_asset("snare.wav")]).unwrap();
+    // A lagging server may still hold buffer 0 until its scheduled free runs.
+    assert_eq!(*backend.0.borrow(), ["load 0", "load 1"]);
 }

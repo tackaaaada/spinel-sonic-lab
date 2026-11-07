@@ -267,6 +267,7 @@ The Rust tests need no SuperCollider connection. Scheduling and bar-transition t
 - **SynthDef load times out:** confirm that standalone `scsynth -u 57110` is ready, that the CLI points to the same port, and that local UDP is available.
 - **Server logs show `/s_new` errors:** inspect the `scsynth` terminal. Standalone scsynth uses root group 0; the CLI sends notes there.
 - **No audible sound:** check the CoreAudio output device chosen by `scsynth`, system volume, and the server log. Start with a low volume. The CLI's successful exit confirms command acceptance, not what was heard at the speakers.
+- **Rhythm rushes or stumbles, and the server prints `late 2.4…`:** scsynth's clock has drifted from the system clock, so it plays late bundles on arrival. This happens on long-running servers in VMs whose emulated audio device advances in coarse jumps (Omarchy in QEMU fixes PipeWire's quantum at 4096 frames). Restart `mise run audio` before listening, avoid changing the quantum while it runs, or use real hardware. An offline render (`mise run render -- INPUT OUT.wav`) is not affected. Buffer and node frees are stamped after their last sound, so a drifting server no longer prints `Buffer UGen: no buffer data`.
 - **Spinel build cannot load `prism`:** use a current Ruby first on `PATH`, then rerun `make`. The build also needs its `make deps` step.
 
 The layer boundaries and scheduling limits are described in [architecture](docs/architecture.md).

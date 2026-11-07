@@ -26,6 +26,15 @@ pub struct NodeUpdate {
     pub controls: Controls,
 }
 
+/// A node or group to free once every sound reserved through `after` has played.
+/// The engine stamps the free on the server timeline, so it cannot cut a sound
+/// that a lagging server is still playing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeRelease {
+    pub node: i32,
+    pub after: Duration,
+}
+
 /// One engine node to create at the tail of `group`.
 pub struct NodeSpec<'a> {
     pub def: &'a str,
@@ -38,8 +47,8 @@ pub trait GraphBackend {
     /// Load definitions and create the strip group followed by the return group.
     fn start(&self) -> GraphResult<()>;
     fn add_node(&self, spec: &NodeSpec<'_>) -> GraphResult<()>;
+    /// Frees a node that never processed sound, after a failed preparation.
     fn free_node(&self, node: i32) -> GraphResult<()>;
-    fn stop(&self) -> GraphResult<()>;
 }
 
 /// The SynthDef and group shared by every node of one kind.
@@ -143,7 +152,15 @@ pub struct ChannelGraph<B: GraphBackend> {
     active: Active,
     retiring: Vec<Retiring>,
     updates: Vec<NodeUpdate>,
-    next_node: i32,
+    next: IdCursors,
+}
+
+/// Where the next node and bus allocations start. Node IDs only grow; buses
+/// rotate, so a released bus returns only after every other free bus and a
+/// lagging server has long freed its old strip.
+struct IdCursors {
+    node: i32,
+    bus: i32,
 }
 
 impl<B: GraphBackend> ChannelGraph<B> {
@@ -154,7 +171,7 @@ impl<B: GraphBackend> ChannelGraph<B> {
             active: Active::default(),
             retiring: Vec::new(),
             updates: Vec::new(),
-            next_node: FIRST_NODE,
+            next: IdCursors { node: FIRST_NODE, bus: FIRST_BUS },
         }
     }
 
@@ -223,29 +240,31 @@ impl<B: GraphBackend> ChannelGraph<B> {
         std::mem::take(&mut self.updates)
     }
 
-    pub fn prune(&mut self, now: Duration) -> GraphResult<()> {
-        let (done, keep) =
+    /// Removes retired nodes whose sounds ended by `now`; the caller must
+    /// schedule each returned free.
+    #[must_use]
+    pub fn release_finished(&mut self, now: Duration) -> Vec<NodeRelease> {
+        let (done, keep): (Vec<_>, _) =
             std::mem::take(&mut self.retiring).into_iter().partition(|r| r.free_after <= now);
         self.retiring = keep;
-        done.iter().try_for_each(|r: &Retiring| self.backend.free_node(r.node))
+        done.iter().map(|r| NodeRelease { node: r.node, after: r.free_after }).collect()
     }
 
-    /// Frees every node after the caller has waited for `tail`.
-    pub fn finish(&mut self) -> GraphResult<()> {
-        let nodes = self.all_nodes();
-        nodes.iter().try_for_each(|node| self.backend.free_node(*node))?;
-        self.active = Active::default();
-        self.retiring.clear();
-        self.stop_if_started()
+    /// Ends playback: both groups, and with them every node, are released after
+    /// the last use. The next `prepare` starts the graph again.
+    #[must_use]
+    pub fn release_all(&mut self) -> Vec<NodeRelease> {
+        if !std::mem::take(&mut self.started) {
+            return Vec::new();
+        }
+        let after = self.last_use();
+        (self.active, self.retiring) = (Active::default(), Vec::new());
+        [STRIP_GROUP, RETURN_GROUP].map(|node| NodeRelease { node, after }).to_vec()
     }
 
-    fn all_nodes(&self) -> Vec<i32> {
-        let retiring = self.retiring.iter().map(|r| r.node);
-        self.active.nodes().map(|n| n.node).chain(retiring).collect()
-    }
-
-    fn stop_if_started(&mut self) -> GraphResult<()> {
-        if std::mem::take(&mut self.started) { self.backend.stop() } else { Ok(()) }
+    fn last_use(&self) -> Duration {
+        let retiring = self.retiring.iter().map(|r| r.free_after);
+        self.active.nodes().map(|n| n.used_until).chain(retiring).max().unwrap_or_default()
     }
 
     /// Extra wait after the last source so return effects can decay.
@@ -316,7 +335,12 @@ impl<'g, B: GraphBackend> Build<'g, B> {
     }
 
     fn bus_for(&mut self, existing: Option<&GraphNode>) -> GraphResult<i32> {
-        existing.map_or_else(|| allocate_bus(&mut self.draft.buses), |node| Ok(node.bus))
+        if let Some(node) = existing {
+            return Ok(node.bus);
+        }
+        let bus = allocate_bus(&mut self.draft.buses, self.graph.next.bus)?;
+        self.graph.next.bus = bus + 2;
+        Ok(bus)
     }
 
     /// Reuses an existing node (staging changed controls) or creates a new one.
@@ -328,8 +352,8 @@ impl<'g, B: GraphBackend> Build<'g, B> {
     }
 
     fn create(&mut self, plan: NodePlan) -> GraphResult<GraphNode> {
-        let node = self.graph.next_node;
-        self.graph.next_node += 1;
+        let node = self.graph.next.node;
+        self.graph.next.node += 1;
         self.graph.backend.add_node(&plan.spec(node))?;
         self.draft.created.push(node);
         Ok(GraphNode::created(node, plan))
@@ -350,11 +374,12 @@ fn retire_missing(old: NodeMap, active: &NodeMap) -> impl Iterator<Item = Retiri
         .map(|(_, node)| Retiring::from(node))
 }
 
-fn allocate_bus(buses: &mut BTreeSet<i32>) -> GraphResult<i32> {
-    let bus = (FIRST_BUS..=LAST_BUS)
-        .step_by(2)
-        .find(|bus| !buses.contains(bus))
-        .ok_or("channel bus capacity exceeded")?;
+/// The first free stereo bus pair at or after `from`, wrapping around.
+fn allocate_bus(buses: &mut BTreeSet<i32>, from: i32) -> GraphResult<i32> {
+    let pairs = (LAST_BUS - FIRST_BUS) / 2 + 1;
+    let start = (from - FIRST_BUS) / 2;
+    let mut rotation = (0..pairs).map(|step| FIRST_BUS + 2 * ((start + step) % pairs));
+    let bus = rotation.find(|bus| !buses.contains(bus)).ok_or("channel bus capacity exceeded")?;
     buses.insert(bus);
     Ok(bus)
 }

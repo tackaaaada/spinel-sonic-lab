@@ -83,6 +83,19 @@ have separate `PlayBuf` SynthDefs in `synthdefs/sampler.scd`; `BufRateScale` kee
 original speed and `OffsetOut` preserves sample scheduling offsets. Whole-file
 playback frees the node at its end. This uses SuperCollider standard UGens.
 
+Frees follow the server's timeline rather than the CLI's. `SampleBuffers` and
+`ChannelGraph` stay clock-free: `release_finished` removes buffers and retired
+nodes whose reservations have ended and returns `BufferRelease`/`NodeRelease`
+values with their last use. The engine stamps each `/b_free` or `/n_free` at that
+time plus a 20 ms margin, so scsynth runs it after the sound that uses it even
+when its clock lags; immediate frees remain only for resources that never
+played (failed preparation). Buffer IDs and strip buses are handed out in
+rotation, so a released ID is not reused while its stamped free may still be
+pending. At the end, `release_all` returns everything, and one bundle stamped
+after the last sound frees the buffers and both groups and ends with `/sync`; it
+is dispatched with the notes' 200 ms lead and the CLI exits only after
+`/synced`, so the next run cannot lose its nodes or buffers to a pending free.
+
 Offline rendering reuses the live path. `nrt.rs` plans a validated score with
 `Scheduler::plan_playback`, prepares `SampleBuffers` and `ChannelGraph` through
 a recording backend, and writes each simultaneous group with the same OSC

@@ -3,11 +3,19 @@ use crate::sample::{MAX_SCORE_SAMPLE_BYTES, SampleAsset};
 use std::time::Duration;
 
 type Assets<'a> = &'a [SampleAsset];
-type BufferResult<T> = Result<T, String>;
 
 pub trait SampleBackend {
     fn load(&self, id: i32, asset: &SampleAsset) -> Result<(), String>;
     fn free(&self, id: i32) -> Result<(), String>;
+}
+
+/// A buffer to free once every sound reserved through `after` has played.
+/// The engine stamps the free on the server timeline, so it cannot overtake a
+/// note that a lagging server has not played yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferRelease {
+    pub id: i32,
+    pub after: Duration,
 }
 
 struct Buffer {
@@ -16,14 +24,20 @@ struct Buffer {
     used_until: Duration,
 }
 
+/// scsynth's default buffer count.
+const BUFFER_IDS: i32 = 1024;
+
+/// IDs are handed out in rotation, so a released ID returns only after every
+/// other free ID: its scheduled free has long run before a new load reuses it.
 pub struct SampleBuffers<B: SampleBackend> {
     backend: B,
     buffers: Vec<Buffer>,
+    next_id: i32,
 }
 
 impl<B: SampleBackend> SampleBuffers<B> {
     pub fn new(backend: B) -> Self {
-        Self { backend, buffers: Vec::new() }
+        Self { backend, buffers: Vec::new(), next_id: 0 }
     }
 
     /// A failed preparation releases only new allocations; active buffers survive.
@@ -63,7 +77,8 @@ impl<B: SampleBackend> SampleBuffers<B> {
 
     fn allocate_id(&self, asset: &SampleAsset) -> Result<i32, String> {
         let total: usize = self.buffers.iter().map(|b| b.asset.bytes.len()).sum();
-        let id = (0..1024).find(|id| self.buffers.iter().all(|b| b.id != *id));
+        let mut rotation = (0..BUFFER_IDS).map(|step| (self.next_id + step) % BUFFER_IDS);
+        let id = rotation.find(|id| self.buffers.iter().all(|b| b.id != *id));
         id.filter(|_| total + asset.bytes.len() <= MAX_SCORE_SAMPLE_BYTES)
             .ok_or_else(|| "sample buffer capacity exceeded (64MiB/1024 buffers)".to_owned())
     }
@@ -74,6 +89,7 @@ impl<B: SampleBackend> SampleBuffers<B> {
             return Err(error);
         }
         self.buffers.push(Buffer::new(id, asset));
+        self.next_id = (id + 1) % BUFFER_IDS;
         Ok(())
     }
 
@@ -101,40 +117,30 @@ impl<B: SampleBackend> SampleBuffers<B> {
         Ok(())
     }
 
-    pub fn prune(&mut self, now: Duration, keep: &[SampleAsset]) -> Result<(), String> {
-        let mut index = 0;
-        while index < self.buffers.len() {
-            if !self.discard(index, now, keep)? {
-                index += 1;
-            }
-        }
-        Ok(())
+    /// Removes buffers whose reservations ended by `now` and are not in `keep`;
+    /// the caller must schedule each returned free.
+    #[must_use]
+    pub fn release_finished(&mut self, now: Duration, keep: Assets<'_>) -> Vec<BufferRelease> {
+        let finished = |b: &Buffer| b.used_until <= now && !keep.contains(&b.asset);
+        let (done, kept) = std::mem::take(&mut self.buffers).into_iter().partition(finished);
+        self.buffers = kept;
+        done.iter().map(Buffer::release).collect()
     }
 
-    fn discard(&mut self, index: usize, now: Duration, keep: Assets<'_>) -> BufferResult<bool> {
-        if self.should_keep(index, now, keep) {
-            return Ok(false);
-        }
-        self.release_index(index)?;
-        Ok(true)
-    }
-
-    fn should_keep(&self, index: usize, now: Duration, keep: &[SampleAsset]) -> bool {
-        let b = &self.buffers[index];
-        b.used_until > now || keep.contains(&b.asset)
-    }
-
-    fn release_index(&mut self, index: usize) -> Result<(), String> {
-        let b = &self.buffers[index];
-        self.backend.free(b.id)?;
-        self.buffers.remove(index);
-        Ok(())
+    /// Removes every buffer at the end of playback; the caller schedules the frees.
+    #[must_use]
+    pub fn release_all(&mut self) -> Vec<BufferRelease> {
+        self.buffers.drain(..).map(|b| b.release()).collect()
     }
 }
 
 impl Buffer {
     fn new(id: i32, asset: &SampleAsset) -> Self {
         Self { id, asset: asset.clone(), used_until: Duration::ZERO }
+    }
+
+    fn release(&self) -> BufferRelease {
+        BufferRelease { id: self.id, after: self.used_until }
     }
 }
 
