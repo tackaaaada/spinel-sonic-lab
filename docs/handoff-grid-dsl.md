@@ -10,7 +10,7 @@
 
 ## 検証したこと
 
-- `cargo test --offline --manifest-path core/Cargo.toml` と `SPINEL_BIN=/home/tkd/Projects/.tools/spinel/bin/spinel sh tests/check_spinel.sh` が通過。Rustでは64分音符の最終ステップ15.9375拍でサンプルと音名付きノートが同時になることを時計待ちなしで確認した。
+- `cargo test --offline --manifest-path core/Cargo.toml` と `SPINEL_BIN=/path/to/spinel sh tests/check_spinel.sh` が通過。Rustでは64分音符の最終ステップ15.9375拍でサンプルと音名付きノートが同時になることを時計待ちなしで確認した。
 - `--dry-run --watch --bars 4 composer/bin/emit_grid_demo.rb` と、`--mute-track kick` / `--mute-track bass` の各経路が通過。
 - ホストで `scsynth -u 57111` にGridデモを送り、CLIは `scsynth accepted 35 note commands` と報告。サーバーログに追加エラーは出なかった。ユーザーによるGridデモの聴感確認は未実施。検証後、57111番のサーバーは停止した。
 - 57110番はこの実行時に使用中だったため57111番で確認した。明日のポート状態は再確認する。

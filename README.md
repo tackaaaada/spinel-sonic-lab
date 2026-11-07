@@ -346,3 +346,7 @@ mise run play-techno
 音が聞こえない場合は[Omarchyの出力接続手順](docs/development-omarchy.md#コマンドは成功するが音が聞こえない場合)を確認してください。
 
 2026-11-01の試聴では、このテクノ試作のキックとベースのバランスを利用者が現時点でOKと確認しました。
+
+## License
+
+Source code, scores and documentation are released under the [MIT License](LICENSE). Audio files created for this project (`samples/` and the previews in `docs/`) are licensed under [CC BY 4.0](LICENSE-AUDIO). Any third-party sample keeps its own license and is listed in [samples/ATTRIBUTION.md](samples/ATTRIBUTION.md). Spinel and SuperCollider are separate projects with their own licenses and are not distributed here.

@@ -4,7 +4,7 @@
 
 ## 次のCodexへの依頼
 
-作業場所は `/home/tkd/Projects/spinel-sonic-lab`。
+作業場所は `<repo root>`。
 `$tdd-master-coach` と `$design-principles-coach` を使い、まずこの資料と `AGENTS.md`、関係するコード・テストを読む。
 現在の最優先課題は、4音サンプルで最初のド→ミだけ発音間隔が短く聴こえる問題の調査と修正。
 これは原因確定・修正済みではない。失敗するテストの追加もまだ行っていない。
@@ -142,8 +142,8 @@ spinel-sonic-labは移行時点でGitリポジトリではなかった。作業�
 GitHub CLI自体はtackaaaadaで認証済み。他の既存リポジトリで一時ブランチへのPush・Pull・削除を確認済み。
 
 スキルの配置先：
-- `/home/tkd/.agents/skills/design-principles-coach/SKILL.md`
-- `/home/tkd/.agents/skills/tdd-master-coach/SKILL.md`
+- `~/.agents/skills/design-principles-coach/SKILL.md`
+- `~/.agents/skills/tdd-master-coach/SKILL.md`
 
 両方ともMacのスキルを参照・テンプレート・agentsメタデータごとコピーする。内容の改変はしない。
 Codexの次の入力で利用できる。見えない場合はセッションを開き直し、`/skills`で確認する。
@@ -160,7 +160,7 @@ Codexの次の入力で利用できる。見えない場合はセッションを
 - Rust 28件成功。CLIのUDPテストはソケット作成が `Operation not permitted` となる環境制限のためopt-inにした。実送信のRed/Greenは未確認。ホスト上で `cd core && cargo test --offline --test timing_tests -- --ignored` を実行する。通常再生とwatch 2小節のtimetag・終了待ちを観測する。
 - 起動中のscsynthがないことを確認後、standalone起動を試したが `could not initialize audio` で終了。この実行環境での音声統合と録音測定は未実施。
 - 利用者の環境で `mise run audio`、別ターミナルで `mise run play` を数回実行し、最初のド→ミが後続と同じ間隔に聴こえるか確認する。改善しない場合は同条件の録音でonset間隔を測定し、音声バッファ経路と実際の発音を引き続き調べる。
-- `SPINEL_BIN=/home/tkd/Projects/.tools/spinel/bin/spinel sh tests/check_spinel.sh` は全構成で成功。`cargo fmt --check` も成功。
+- `SPINEL_BIN=/path/to/spinel sh tests/check_spinel.sh` は全構成で成功。`cargo fmt --check` も成功。
 
 ## 利用者による修正後の聴感確認
 
