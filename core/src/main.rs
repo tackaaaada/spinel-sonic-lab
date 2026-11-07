@@ -4,13 +4,21 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use spinel_sonic_lab::osc::{OscClient, system_time_to_ntp};
-use spinel_sonic_lab::schedule::{PlaybackEvent, PlaybackSound, Scheduler};
+use spinel_sonic_lab::mixer::ChannelGraph;
+use spinel_sonic_lab::osc::{
+    GraphClient, Lookups, OscClient, SAMPLE_SYNTHDEFS, system_time_to_ntp,
+};
+use spinel_sonic_lab::sample::SampleAsset;
+use spinel_sonic_lab::schedule::{
+    PlaybackEvent, PlaybackSound, ScheduledBar, ScheduledNote, Scheduler,
+};
 
 use spinel_sonic_lab::model::Score;
 use spinel_sonic_lab::sampler::SampleBuffers;
 use spinel_sonic_lab::source::{load_score_file, prepare_score};
 use spinel_sonic_lab::watch::ScoreWatcher;
+
+type CliArgs = std::iter::Skip<std::env::Args>;
 
 fn main() {
     if let Err(error) = run() {
@@ -19,240 +27,476 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), String> {
-    let mut dry_run = false;
-    let mut watch = false;
-    let mut bars: Option<usize> = None;
-    let mut host = String::from("127.0.0.1");
-    let mut port = 57110_u16;
-    let mut synthdef = PathBuf::from("synthdefs/analog_bass.scsyndef");
-    let mut mute_track = None;
-    let mut input = None;
-    let mut args = env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--dry-run" => dry_run = true,
-            "--watch" => watch = true,
-            "--bars" => {
-                let count: usize = args
-                    .next()
-                    .ok_or("--bars needs a value")?
-                    .parse()
-                    .map_err(|_| "--bars must be a positive integer")?;
-                if count == 0 {
-                    return Err("--bars must be positive".to_owned());
-                }
-                bars = Some(count);
-            }
-            "--host" => host = args.next().ok_or("--host needs a value")?,
-            "--port" => {
-                port = args
-                    .next()
-                    .ok_or("--port needs a value")?
-                    .parse()
-                    .map_err(|_| "--port must be a number from 1 to 65535")?;
-                if port == 0 {
-                    return Err("--port must be nonzero".to_owned());
-                }
-            }
-            "--synthdef" => synthdef = PathBuf::from(args.next().ok_or("--synthdef needs a path")?),
-            "--mute-track" => {
-                if mute_track.is_some() {
-                    return Err("--mute-track may be specified once".to_owned());
-                }
-                mute_track = Some(args.next().ok_or("--mute-track needs a name")?);
-            }
-            "--help" | "-h" => {
-                println!(
-                    "Usage: spinel-sonic-lab [--dry-run] [--watch] [--bars COUNT] [--mute-track NAME] [--host 127.0.0.1] [--port 57110] [--synthdef PATH] INPUT\nINPUT is an NDJSON or Spinel .rb file, or - for stdin (--watch requires a file path)."
-                );
+#[derive(Default)]
+struct CliOptions {
+    dry_run: bool,
+    watch: bool,
+    bars: Option<usize>,
+    host: String,
+    port: u16,
+    synthdef: PathBuf,
+    mute_track: Option<String>,
+    input: Option<String>,
+    help: bool,
+}
+
+impl CliOptions {
+    fn parse() -> Result<Self, String> {
+        let mut options = Self::new();
+        options.consume_args(&mut env::args().skip(1))?;
+        if !options.help {
+            options.validate()?;
+        }
+        Ok(options)
+    }
+
+    fn consume_args(&mut self, args: &mut CliArgs) -> Result<(), String> {
+        while let Some(arg) = args.next() {
+            if arg == "--help" || arg == "-h" {
+                self.help = true;
                 return Ok(());
             }
-            _ if arg.starts_with('-') && arg != "-" => {
-                return Err(format!("unknown option: {arg}"));
-            }
-            _ if input.is_none() => input = Some(arg),
-            _ => return Err("provide exactly one input file or -".to_owned()),
+            self.apply(&arg, args)?;
+        }
+        Ok(())
+    }
+
+    fn new() -> Self {
+        Self {
+            host: String::from("127.0.0.1"),
+            port: 57110,
+            synthdef: PathBuf::from("synthdefs/analog_bass.scsyndef"),
+            ..Self::default()
         }
     }
-    if bars.is_some() && !watch {
-        return Err("--bars requires --watch".to_owned());
+
+    fn apply(&mut self, arg: &str, args: &mut CliArgs) -> Result<(), String> {
+        match arg {
+            "--dry-run" => self.dry_run = true,
+            "--watch" => self.watch = true,
+            _ => return self.apply_value(arg, args),
+        }
+        Ok(())
     }
-    let input = input.ok_or("provide an NDJSON or .rb input file or -")?;
-    if watch {
-        if input == "-" {
+
+    fn apply_value(&mut self, arg: &str, args: &mut CliArgs) -> Result<(), String> {
+        match arg {
+            "--bars" => self.bars = Some(parse_bars_arg(args.next())?),
+            "--host" => self.host = args.next().ok_or("--host needs a value")?,
+            "--port" => self.port = parse_port_arg(args.next())?,
+            _ => return self.apply_remaining(arg, args),
+        }
+        Ok(())
+    }
+
+    fn apply_remaining(&mut self, arg: &str, args: &mut CliArgs) -> Result<(), String> {
+        match arg {
+            "--synthdef" => self.set_synthdef(args.next())?,
+            "--mute-track" => self.set_mute(args.next())?,
+            _ => self.set_input(arg)?,
+        }
+        Ok(())
+    }
+
+    fn set_synthdef(&mut self, value: Option<String>) -> Result<(), String> {
+        self.synthdef = PathBuf::from(value.ok_or("--synthdef needs a path")?);
+        Ok(())
+    }
+
+    fn set_mute(&mut self, value: Option<String>) -> Result<(), String> {
+        if self.mute_track.is_some() {
+            return Err("--mute-track may be specified once".to_owned());
+        }
+        self.mute_track = Some(value.ok_or("--mute-track needs a name")?);
+        Ok(())
+    }
+
+    fn set_input(&mut self, arg: &str) -> Result<(), String> {
+        if arg.starts_with('-') && arg != "-" {
+            return Err(format!("unknown option: {arg}"));
+        }
+        if self.input.is_some() {
+            return Err("provide exactly one input file or -".to_owned());
+        }
+        self.input = Some(arg.to_owned());
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.bars.is_some() && !self.watch {
+            return Err("--bars requires --watch".to_owned());
+        }
+        let input = self.required_input()?;
+        if self.watch && input == "-" {
             return Err("--watch requires a file path, not stdin".to_owned());
         }
-        return run_watch(
-            PathBuf::from(input),
-            mute_track,
-            dry_run,
-            bars,
-            &host,
-            port,
-            &synthdef,
-        );
+        Ok(())
     }
 
-    let source = if input == "-" {
-        let mut text = String::new();
-        io::stdin()
-            .read_to_string(&mut text)
-            .map_err(|error| format!("stdin read failed: {error}"))?;
-        text
-    } else {
-        load_score_file(Path::new(&input))?
-    };
+    fn required_input(&self) -> Result<&str, String> {
+        self.input.as_deref().ok_or("provide an NDJSON or .rb input file or -".to_owned())
+    }
+}
 
-    let base = if input == "-" {
-        Path::new(".")
-    } else {
-        Path::new(&input).parent().unwrap_or(Path::new("."))
-    };
-    let score = prepare_score(&source, base, mute_track.as_deref())?;
-    let notes = Scheduler::plan_playback(&score)?;
-    if dry_run {
-        print_dry_run(&notes);
+fn parse_bars_arg(value: Option<String>) -> Result<usize, String> {
+    let count: usize = value
+        .ok_or("--bars needs a value")?
+        .parse()
+        .map_err(|_| "--bars must be a positive integer")?;
+    if count == 0 {
+        return Err("--bars must be positive".to_owned());
+    }
+    Ok(count)
+}
+
+fn parse_port_arg(value: Option<String>) -> Result<u16, String> {
+    let port: u16 = value
+        .ok_or("--port needs a value")?
+        .parse()
+        .map_err(|_| "--port must be a number from 1 to 65535")?;
+    if port == 0 {
+        return Err("--port must be nonzero".to_owned());
+    }
+    Ok(port)
+}
+
+fn print_help() {
+    println!(
+        "Usage: spinel-sonic-lab [--dry-run] [--watch] [--bars COUNT] [--mute-track NAME] [--host 127.0.0.1] [--port 57110] [--synthdef PATH] INPUT\nINPUT is an NDJSON or Spinel .rb file, or - for stdin (--watch requires a file path)."
+    );
+}
+
+fn run() -> Result<(), String> {
+    let options = CliOptions::parse()?;
+    if options.help {
+        print_help();
         return Ok(());
     }
+    run_with_options(options)
+}
 
-    let osc = OscClient::connect(&host, port)?;
-    osc.load_synthdef(&synthdef)?;
-    let mut buffers = SampleBuffers::new(&osc);
-    prepare_sampler(&osc, &synthdef, &mut false, &mut buffers, &score)?;
-    let clock = PlaybackClock::new(Instant::now(), SystemTime::now())?;
-    let mut end = Duration::ZERO;
-    let result = play_scheduled_events(&osc, &clock, &notes, &mut buffers, &mut end);
-    sleep_until(clock.audible_start, end)?;
-    result?;
-    osc.verify_commands()?;
-    eprintln!("scsynth accepted {} note commands", notes.len());
+fn run_with_options(options: CliOptions) -> Result<(), String> {
+    let input = options.required_input()?.to_owned();
+    if options.watch {
+        return run_watch(options, input);
+    }
+    run_once(&options, &input)
+}
+
+fn run_once(options: &CliOptions, input: &str) -> Result<(), String> {
+    let source = load_input(input)?;
+    let score = prepare_score(&source, input_base(input), options.mute_track.as_deref())?;
+    let events = Scheduler::plan_playback(&score)?;
+    if options.dry_run {
+        print_dry_run(&events);
+        return Ok(());
+    }
+    play_once(&score, &events, options)
+}
+
+fn input_base(input: &str) -> &Path {
+    if input == "-" { Path::new(".") } else { Path::new(input).parent().unwrap_or(Path::new(".")) }
+}
+
+fn load_input(input: &str) -> Result<String, String> {
+    if input != "-" {
+        return load_score_file(Path::new(input));
+    }
+    let mut text = String::new();
+    io::stdin().read_to_string(&mut text).map_err(|error| format!("stdin read failed: {error}"))?;
+    Ok(text)
+}
+
+fn play_once(score: &Score, events: &[PlaybackEvent], options: &CliOptions) -> Result<(), String> {
+    let osc = connect_server(options)?;
+    let mut engine = Engine::new(&osc, &options.synthdef);
+    engine.prepare(score)?;
+    let clock = PlaybackClock::start()?;
+    let result = engine.play(&clock, events);
+    engine.finish(&clock, result)?;
+    eprintln!("scsynth accepted {} note commands", events.len());
     Ok(())
 }
 
-fn run_watch(
-    path: PathBuf,
-    mute_track: Option<String>,
-    dry_run: bool,
-    bars: Option<usize>,
-    host: &str,
-    port: u16,
-    synthdef: &Path,
-) -> Result<(), String> {
-    let mut watcher = ScoreWatcher::from_path(path, mute_track)?;
-    if dry_run {
-        let limit = bars.unwrap_or(1);
-        for _ in 0..limit {
-            let (bar, warning) = watcher.next_bar()?;
-            if let Some(warning) = warning {
-                eprintln!("reload ignored: {warning}");
-            }
-            print_dry_run(&bar.playback);
-        }
-        return Ok(());
+fn connect_server(options: &CliOptions) -> Result<OscClient, String> {
+    let osc = OscClient::connect(&options.host, options.port)?;
+    osc.load_synthdef(&options.synthdef)?;
+    Ok(osc)
+}
+
+/// Engine resources prepared before playback: sample buffers and the channel graph.
+struct Engine<'a> {
+    osc: &'a OscClient,
+    samples: SamplePlayer<'a>,
+    graph: ChannelGraph<GraphClient<'a>>,
+    /// Latest end of any dispatched event; resources stay reserved until then.
+    end: Duration,
+}
+
+impl<'a> Engine<'a> {
+    fn new(osc: &'a OscClient, synthdef: &'a Path) -> Self {
+        let synthdef_dir = synthdef.parent().unwrap_or(Path::new("."));
+        let graph = ChannelGraph::new(GraphClient { osc, synthdef_dir });
+        let samples = SamplePlayer::new(osc, synthdef_dir);
+        Self { osc, samples, graph, end: Duration::ZERO }
     }
 
-    let osc = OscClient::connect(host, port)?;
-    osc.load_synthdef(synthdef)?;
-    watcher.start_background_poller(Duration::from_millis(50));
-    let mut buffers = SampleBuffers::new(&osc);
-    let mut definitions_loaded = false;
-    let (first_bar, warning) = watcher.next_bar_with(&mut |score| {
-        prepare_sampler(&osc, synthdef, &mut definitions_loaded, &mut buffers, score)
-    })?;
+    /// Both must succeed before a watch reload commits.
+    fn prepare(&mut self, score: &Score) -> Result<(), String> {
+        self.samples.prepare(score)?;
+        self.graph.prepare(score)
+    }
+
+    /// Frees buffers and retired nodes whose sounds have ended, each stamped on
+    /// the server timeline after its last use, keeping the assets in `keep`.
+    fn prune(&mut self, clock: &PlaybackClock, keep: &[SampleAsset]) -> Result<(), String> {
+        let now = clock.audible_elapsed();
+        for release in self.samples.buffers.release_finished(now, keep) {
+            self.osc.release_buffer(clock.release_timetag(release.after)?, release.id)?;
+        }
+        for release in self.graph.release_finished(now) {
+            self.osc.release_node(clock.release_timetag(release.after)?, release.node)?;
+        }
+        Ok(())
+    }
+
+    /// Sends reloaded strip and return controls to change exactly at `timetag`.
+    fn apply_control_updates(&mut self, timetag: u64) -> Result<(), String> {
+        let updates = self.graph.take_updates();
+        self.osc.set_controls_bundle(timetag, &updates)
+    }
+
+    fn play(&mut self, clock: &PlaybackClock, events: &[PlaybackEvent]) -> Result<(), String> {
+        let mut groups = events.chunk_by(|a, b| a.at == b.at);
+        groups.try_for_each(|group| self.dispatch(clock, group))
+    }
+
+    /// Sends simultaneous events as one bundle once their buffers and strips are reserved.
+    fn dispatch(&mut self, clock: &PlaybackClock, group: &[PlaybackEvent]) -> Result<(), String> {
+        let at = group[0].at;
+        sleep_until(clock.dispatch_start, at)?;
+        warn_if_late(clock, at)?;
+        group.iter().try_for_each(|event| self.reserve(event))?;
+        self.send_bundle(clock.timetag(at)?, group)
+    }
+
+    /// Keeps the event's buffer and strip through its end.
+    fn reserve(&mut self, event: &PlaybackEvent) -> Result<(), String> {
+        let event_end = event.end()?;
+        self.end = self.end.max(event_end);
+        if let Some(track) = &event.route {
+            self.graph.mark_used(track, event_end);
+        }
+        self.samples.reserve(event, event_end)
+    }
+
+    fn send_bundle(&self, timetag: u64, group: &[PlaybackEvent]) -> Result<(), String> {
+        let lookups = Lookups {
+            sample: &|asset: &SampleAsset| self.samples.buffers.buffer_id(asset),
+            route: &|track: &str| self.graph.route_bus(track),
+        };
+        self.osc.play_events_bundle(timetag, group, &lookups)
+    }
+
+    /// Releases every buffer and node stamped after the last sound, then waits
+    /// until the server has run that release on its own clock.
+    fn finish(&mut self, clock: &PlaybackClock, result: Result<(), String>) -> Result<(), String> {
+        sleep_until(clock.dispatch_start, self.end.saturating_add(self.graph.tail()))?;
+        result?;
+        let (buffers, nodes) = (self.samples.buffers.release_all(), self.graph.release_all());
+        let last = buffers.iter().map(|r| r.after).chain(nodes.iter().map(|r| r.after));
+        let timetag = clock.release_timetag(last.fold(self.end, Duration::max))?;
+        let buffer_ids: Vec<i32> = buffers.iter().map(|r| r.id).collect();
+        let node_ids: Vec<i32> = nodes.iter().map(|r| r.node).collect();
+        self.osc.release_and_confirm(timetag, &buffer_ids, &node_ids)
+    }
+}
+
+/// Sample buffers, with sample SynthDefs loaded the first time a score uses samples.
+struct SamplePlayer<'a> {
+    osc: &'a OscClient,
+    synthdef_dir: &'a Path,
+    definitions_loaded: bool,
+    buffers: SampleBuffers<&'a OscClient>,
+}
+
+impl<'a> SamplePlayer<'a> {
+    fn new(osc: &'a OscClient, synthdef_dir: &'a Path) -> Self {
+        Self { osc, synthdef_dir, definitions_loaded: false, buffers: SampleBuffers::new(osc) }
+    }
+
+    fn prepare(&mut self, score: &Score) -> Result<(), String> {
+        let assets = score.used_sample_assets();
+        if !assets.is_empty() {
+            self.load_definitions()?;
+        }
+        self.buffers.prepare(assets.iter())
+    }
+
+    fn load_definitions(&mut self) -> Result<(), String> {
+        if !self.definitions_loaded {
+            for name in SAMPLE_SYNTHDEFS {
+                let path = self.synthdef_dir.join(format!("{name}.scsyndef"));
+                self.osc.load_synthdef(&path)?;
+            }
+            self.definitions_loaded = true;
+        }
+        Ok(())
+    }
+
+    fn reserve(&mut self, event: &PlaybackEvent, end: Duration) -> Result<(), String> {
+        match &event.sound {
+            PlaybackSound::Sample { asset, .. } => self.buffers.mark_used(asset, end),
+            PlaybackSound::Synth(_) => Ok(()),
+        }
+    }
+}
+
+fn run_watch(options: CliOptions, input: String) -> Result<(), String> {
+    let watcher = ScoreWatcher::from_path(PathBuf::from(input), options.mute_track.clone())?;
+    if options.dry_run {
+        return dry_watch(watcher, options.bars);
+    }
+    play_watch(watcher, &options)
+}
+
+fn dry_watch(mut watcher: ScoreWatcher, bars: Option<usize>) -> Result<(), String> {
+    for _ in 0..bars.unwrap_or(1) {
+        let (bar, warning) = watcher.next_bar()?;
+        report_reload_warning(warning);
+        print_dry_run(&bar.playback);
+    }
+    Ok(())
+}
+
+fn report_reload_warning(warning: Option<String>) {
     if let Some(warning) = warning {
         eprintln!("reload ignored: {warning}");
     }
-    let clock = PlaybackClock::new(Instant::now(), SystemTime::now())?;
-    let mut first_bar = Some(first_bar);
-    let mut bar_index = 0;
-    let mut total_notes = 0;
-    let mut end = Duration::ZERO;
-    let result = (|| -> Result<(), String> {
-        loop {
-            if bars.is_some_and(|limit| bar_index >= limit) {
-                break;
-            }
-            buffers.prune(
-                Instant::now().saturating_duration_since(clock.audible_start),
-                &watcher.sample_assets(),
-            )?;
-            let bar = if let Some(bar) = first_bar.take() {
-                bar
-            } else {
-                let (bar, warning) = watcher.next_bar_with(&mut |score| {
-                    prepare_sampler(&osc, synthdef, &mut definitions_loaded, &mut buffers, score)
-                })?;
-                if let Some(warning) = warning {
-                    eprintln!("reload ignored: {warning}");
-                }
-                bar
-            };
-            play_scheduled_events(&osc, &clock, &bar.playback, &mut buffers, &mut end)?;
-            osc.verify_commands()?;
-            total_notes += bar.playback.len();
-            bar_index += 1;
-            if bars.is_none_or(|limit| bar_index < limit) {
-                let boundary = bar
-                    .start
-                    .checked_add(bar.duration)
-                    .ok_or("scheduled time is out of range")?;
-                sleep_until(clock.dispatch_start, boundary)?;
-            }
-        }
-        Ok(())
-    })();
-    // Also protects buffers referenced by long notes from earlier bars or by a
-    // bundle already sent before an error. Dropping them here is then safe.
-    sleep_until(clock.audible_start, end)?;
-    result?;
-    osc.verify_commands()?;
-    eprintln!("scsynth accepted {total_notes} note commands");
-    Ok(())
 }
 
-fn prepare_sampler(
-    osc: &OscClient,
-    synthdef: &Path,
-    loaded: &mut bool,
-    buffers: &mut SampleBuffers<&OscClient>,
-    score: &Score,
-) -> Result<(), String> {
-    let assets = score.used_sample_assets();
-    if !assets.is_empty() && !*loaded {
-        let directory = synthdef.parent().unwrap_or(Path::new("."));
-        osc.load_synthdef(&directory.join("sample_mono.scsyndef"))?;
-        osc.load_synthdef(&directory.join("sample_stereo.scsyndef"))?;
-        *loaded = true;
+fn play_watch(mut watcher: ScoreWatcher, options: &CliOptions) -> Result<(), String> {
+    let osc = connect_server(options)?;
+    watcher.start_background_poller(Duration::from_millis(50));
+    let mut engine = Engine::new(&osc, &options.synthdef);
+    let (first_bar, warning) = watcher.next_bar_with(&mut |score| engine.prepare(score))?;
+    report_reload_warning(warning);
+    let clock = PlaybackClock::start()?;
+    WatchRunner::new(watcher, engine, clock).play(first_bar, options.bars)
+}
+
+#[derive(Default)]
+struct WatchStats {
+    bar_index: usize,
+    total_notes: usize,
+}
+
+struct WatchRunner<'a> {
+    watcher: ScoreWatcher,
+    engine: Engine<'a>,
+    clock: PlaybackClock,
+    stats: WatchStats,
+}
+
+impl<'a> WatchRunner<'a> {
+    fn new(watcher: ScoreWatcher, engine: Engine<'a>, clock: PlaybackClock) -> Self {
+        Self { watcher, engine, clock, stats: WatchStats::default() }
     }
-    buffers.prepare(assets.iter())
+
+    fn play(&mut self, first: ScheduledBar, bars: Option<usize>) -> Result<(), String> {
+        let result = self.play_bars(first, bars);
+        // Keep buffers and strips alive until the last audible sound completes.
+        self.engine.finish(&self.clock, result)?;
+        eprintln!("scsynth accepted {} note commands", self.stats.total_notes);
+        Ok(())
+    }
+
+    fn play_bars(&mut self, first: ScheduledBar, bars: Option<usize>) -> Result<(), String> {
+        self.prune()?;
+        let mut bar = first;
+        self.play_bar(&bar)?;
+        while self.has_bars_left(bars) {
+            bar = self.advance(&bar)?;
+            self.play_bar(&bar)?;
+        }
+        Ok(())
+    }
+
+    /// Waits for the bar boundary, releases finished resources, then takes the next bar.
+    fn advance(&mut self, bar: &ScheduledBar) -> Result<ScheduledBar, String> {
+        self.wait_boundary(bar)?;
+        self.prune()?;
+        self.next_bar()
+    }
+
+    fn has_bars_left(&self, bars: Option<usize>) -> bool {
+        bars.is_none_or(|limit| self.stats.bar_index < limit)
+    }
+
+    fn prune(&mut self) -> Result<(), String> {
+        self.engine.prune(&self.clock, &self.watcher.sample_assets())
+    }
+
+    fn next_bar(&mut self) -> Result<ScheduledBar, String> {
+        let engine = &mut self.engine;
+        let (bar, warning) = self.watcher.next_bar_with(&mut |score| engine.prepare(score))?;
+        report_reload_warning(warning);
+        Ok(bar)
+    }
+
+    fn play_bar(&mut self, bar: &ScheduledBar) -> Result<(), String> {
+        self.engine.apply_control_updates(self.clock.timetag(bar.start)?)?;
+        self.engine.play(&self.clock, &bar.playback)?;
+        self.engine.osc.verify_commands()?;
+        self.stats.total_notes += bar.playback.len();
+        self.stats.bar_index += 1;
+        Ok(())
+    }
+
+    fn wait_boundary(&self, bar: &ScheduledBar) -> Result<(), String> {
+        let boundary = bar.start.checked_add(bar.duration).ok_or(OUT_OF_RANGE)?;
+        sleep_until(self.clock.dispatch_start, boundary)
+    }
 }
 
 fn print_dry_run(events: &[PlaybackEvent]) {
-    for event in events {
-        match &event.sound {
-            PlaybackSound::Synth(note) => println!(
-                "{:.3}s freq={:.3}Hz dur={:.3}s amp={:.3} gain={:.3} output_amp={:.3}",
-                note.at.as_secs_f64(),
-                note.frequency,
-                note.duration_seconds,
-                note.amplitude,
-                note.tone.gain,
-                note.amplitude * note.tone.gain
-            ),
-            PlaybackSound::Sample { name, .. } => println!(
-                "{:.3}s sample={} dur={:.3}s amp={:.3}",
-                event.at.as_secs_f64(),
-                name,
-                event.duration.as_secs_f64(),
-                event.amplitude
-            ),
-        }
+    events.iter().for_each(print_dry_run_event);
+}
+
+fn print_dry_run_event(event: &PlaybackEvent) {
+    match &event.sound {
+        PlaybackSound::Synth(note) => print_synth_note(note),
+        PlaybackSound::Sample { name, .. } => print_sample_note(event, name),
     }
+    if let Some(track) = &event.route {
+        println!("  -> strip {track}");
+    }
+}
+
+fn print_synth_note(note: &ScheduledNote) {
+    let (at, gain) = (note.at.as_secs_f64(), note.tone.gain);
+    let (frequency, duration, amp) = (note.frequency, note.duration_seconds, note.amplitude);
+    let output_amp = amp * gain;
+    println!(
+        "{at:.3}s freq={frequency:.3}Hz dur={duration:.3}s amp={amp:.3} gain={gain:.3} output_amp={output_amp:.3}"
+    );
+}
+
+fn print_sample_note(event: &PlaybackEvent, name: &str) {
+    println!(
+        "{:.3}s sample={} dur={:.3}s amp={:.3}",
+        event.at.as_secs_f64(),
+        name,
+        event.duration.as_secs_f64(),
+        event.amplitude
+    );
 }
 
 // Runtime clock bridge: musical offsets stay independent of OSC and wall time.
 const DISPATCH_LEAD: Duration = Duration::from_millis(200);
+
+/// Frees land after the control block that plays a resource's last sample.
+const RELEASE_MARGIN: Duration = Duration::from_millis(20);
 
 struct PlaybackClock {
     dispatch_start: Instant,
@@ -261,66 +505,55 @@ struct PlaybackClock {
 }
 
 impl PlaybackClock {
+    fn start() -> Result<Self, String> {
+        Self::new(Instant::now(), SystemTime::now())
+    }
+
     fn new(monotonic: Instant, wall: SystemTime) -> Result<Self, String> {
         Ok(Self {
             dispatch_start: monotonic,
-            audible_start: monotonic
-                .checked_add(DISPATCH_LEAD)
-                .ok_or("scheduled time is out of range")?,
-            wall_start: wall
-                .checked_add(DISPATCH_LEAD)
-                .ok_or("scheduled time is out of range")?,
+            audible_start: after(monotonic, DISPATCH_LEAD)?,
+            wall_start: future_wall(wall)?,
         })
     }
 
     fn timetag(&self, offset: Duration) -> Result<u64, String> {
-        let time = self
-            .wall_start
-            .checked_add(offset)
-            .ok_or("scheduled time is out of range")?;
+        let time = self.wall_start.checked_add(offset).ok_or(OUT_OF_RANGE)?;
         Ok(system_time_to_ntp(time))
+    }
+
+    /// When to free a resource last used until `after`.
+    fn release_timetag(&self, after: Duration) -> Result<u64, String> {
+        self.timetag(after.saturating_add(RELEASE_MARGIN))
+    }
+
+    /// Playback time heard so far.
+    fn audible_elapsed(&self) -> Duration {
+        Instant::now().saturating_duration_since(self.audible_start)
     }
 }
 
-fn play_scheduled_events(
-    osc: &OscClient,
-    clock: &PlaybackClock,
-    events: &[PlaybackEvent],
-    buffers: &mut SampleBuffers<&OscClient>,
-    end: &mut Duration,
-) -> Result<(), String> {
-    for group in events.chunk_by(|a, b| a.at == b.at) {
-        let at = group[0].at;
-        sleep_until(clock.dispatch_start, at)?;
-        let due = clock
-            .audible_start
-            .checked_add(at)
-            .ok_or("scheduled time is out of range")?;
-        if Instant::now() >= due {
-            eprintln!(
-                "warning: late OSC dispatch at {:.3}s; keeping planned timetag",
-                at.as_secs_f64()
-            );
-        }
-        for event in group {
-            *end = (*end).max(event.end()?);
-            if let PlaybackSound::Sample { asset, .. } = &event.sound {
-                buffers.mark_used(asset, event.end()?)?;
-            }
-        }
-        osc.play_events_bundle(clock.timetag(at)?, group, |asset| buffers.buffer_id(asset))?;
+fn future_wall(start: SystemTime) -> Result<SystemTime, String> {
+    start.checked_add(DISPATCH_LEAD).ok_or_else(|| OUT_OF_RANGE.to_owned())
+}
+
+const OUT_OF_RANGE: &str = "scheduled time is out of range";
+
+fn after(start: Instant, offset: Duration) -> Result<Instant, String> {
+    start.checked_add(offset).ok_or_else(|| OUT_OF_RANGE.to_owned())
+}
+
+fn warn_if_late(clock: &PlaybackClock, at: Duration) -> Result<(), String> {
+    if Instant::now() >= after(clock.audible_start, at)? {
+        let seconds = at.as_secs_f64();
+        eprintln!("warning: late OSC dispatch at {seconds:.3}s; keeping planned timetag");
     }
     Ok(())
 }
 
 fn sleep_until(start: Instant, offset: Duration) -> Result<(), String> {
-    let due = start
-        .checked_add(offset)
-        .ok_or("scheduled time is out of range")?;
-    let now = Instant::now();
-    if due > now {
-        thread::sleep(due - now);
-    }
+    let due = after(start, offset)?;
+    thread::sleep(due.saturating_duration_since(Instant::now()));
     Ok(())
 }
 
@@ -329,35 +562,43 @@ mod timing_tests {
     use super::*;
     use std::time::UNIX_EPOCH;
 
+    const WALL: Duration = Duration::from_secs(1_000);
+
+    fn clock_at(monotonic: Instant) -> PlaybackClock {
+        PlaybackClock::new(monotonic, UNIX_EPOCH + WALL).unwrap()
+    }
+
     #[test]
-    fn playback_clock_keeps_first_note_ahead_and_all_intervals_even() {
+    fn playback_clock_keeps_the_first_note_200ms_ahead() {
         let monotonic = Instant::now();
-        let wall = UNIX_EPOCH + Duration::from_secs(1_000);
-        let clock = PlaybackClock::new(monotonic, wall).unwrap();
-        assert_eq!(
-            clock.audible_start.duration_since(monotonic),
-            Duration::from_millis(200)
-        );
+        let clock = clock_at(monotonic);
+        let lead = Duration::from_millis(200);
+        assert_eq!(clock.audible_start.duration_since(monotonic), lead);
         let first = clock.timetag(Duration::ZERO).unwrap();
-        assert_eq!(
-            first,
-            spinel_sonic_lab::osc::system_time_to_ntp(wall + Duration::from_millis(200))
-        );
-        for (ms, fraction) in [
-            (250, 1_u64 << 30),
-            (500, 1_u64 << 31),
-            (750, 3_u64 << 30),
-            (2000, 2_u64 << 32),
-        ] {
-            assert_eq!(
-                clock.timetag(Duration::from_millis(ms)).unwrap() - first,
-                fraction
-            );
-            assert_eq!(
-                clock.dispatch_start.checked_add(Duration::from_millis(ms)),
-                monotonic.checked_add(Duration::from_millis(ms))
-            );
+        assert_eq!(first, system_time_to_ntp(UNIX_EPOCH + WALL + lead));
+    }
+
+    #[test]
+    fn playback_clock_spaces_all_intervals_evenly() {
+        let clock = clock_at(Instant::now());
+        let first = clock.timetag(Duration::ZERO).unwrap();
+        let expected = [(250, 1_u64 << 30), (500, 1 << 31), (750, 3 << 30), (2000, 2 << 32)];
+        for (ms, fraction) in expected {
+            let tag = clock.timetag(Duration::from_millis(ms)).unwrap();
+            assert_eq!(tag - first, fraction);
         }
+    }
+
+    #[test]
+    fn playback_clock_dispatches_from_the_monotonic_origin() {
+        let monotonic = Instant::now();
+        assert_eq!(clock_at(monotonic).dispatch_start, monotonic);
+    }
+
+    #[test]
+    fn playback_clock_keeps_planned_timetags_and_rejects_overflow() {
+        let clock = clock_at(Instant::now());
+        let first = clock.timetag(Duration::ZERO).unwrap();
         // Even after dispatch falls behind, planned timestamps must not be rebased.
         assert_eq!(clock.timetag(Duration::ZERO).unwrap(), first);
         assert!(clock.timetag(Duration::MAX).is_err());

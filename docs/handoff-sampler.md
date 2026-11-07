@@ -21,19 +21,18 @@
 - WAV素材チェック、cargo fmt --check成功。dry-runで混在14イベントとスネアのミュートを確認。
 - `sclang synthdefs/sampler.scd`はoffscreen/generic設定で試したが、この実行環境の `_LocalIPs` 権限エラーにより初期化未完了、生成不可。sclangの失敗ログは `/tmp/spinel-sampler-sclang.log`。QtのGTKクラッシュではない。
 
+### 2026-11-01 追確認
+
+- `emit_samples.rb` のベースを fixture と設計記録どおり 0.5/1.5/2.5/3.5 拍へ戻した。実 Spinel で全構成の fixture 比較が成功し、Rust テストも Git LFS の WAV 実体を取得した状態で全件成功した。
+- ホスト権限で `analog_bass.scd` と `sampler.scd` の SynthDef を再生成。UDP 時刻テスト2件が成功した。
+- 独立した `scsynth` は `SuperCollider 3 server ready.` を出力。4小節の CLI 再生は終了コード0で `scsynth accepted 56 note commands` を出力し、サーバーログにエラーは出なかった。再生後にサーバーは停止した。
+- その後、利用者が起動した `scsynth -u 57110` への再生は受理されたが無音だった。PipeWireで `SuperCollider:out_1`/`out_2` が未接続と確認し、既定の `omarchy_host_output` の左右へ接続した。同じ4小節を再生し、利用者が聞こえたことを確認した。
+- その後のテクノ試作では、キックとベースの現在のバランスを利用者がOKと確認した。サンプラー例の個別のバランス評価と、保存編集が次小節で反映するかは未確認。
+
 ## ホストで残る確認
 
-音声サーバーが未起動なら `mise run audio` を起動する。別ターミナルで:
-
-```sh
-mise run play-samples
-```
-
-このタスクが `analog_bass.scd` と新しい `sampler.scd` をコンパイルしてから再生する。
-キック・スネア・ハイハットとベースが同時に正しい間隔で聴こえること、CLIとサーバーのログに失敗がないことを確認する。
-サンプラー経由の実音・新SynthDef生成はホスト確認待ちであり、完成確認済みとは扱わない。
-追加検証は `cd core && cargo test --offline --test timing_tests -- --ignored`。
-ライブ編集は `mise run watch-samples`、対象ファイルは `composer/bin/emit_samples.rb`。
+サンプラー経由のOSC送信と新SynthDef生成は2026-11-01にホスト確認済み。`cd core && cargo test --offline --test timing_tests -- --ignored` もホスト権限で2件成功済み。
+サンプラー例の実音は利用者確認済み。テクノ試作のキックとベースは現時点でOK。サンプラー例そのもののバランス評価と、保存編集の実機確認は別に残る。後者は `mise run audio` と `mise run watch-samples` を別ターミナルで起動し、`composer/bin/emit_samples.rb` を編集する。再び無音なら `development-omarchy.md` のPipeWire接続手順を確認する。
 
 ## 制限
 

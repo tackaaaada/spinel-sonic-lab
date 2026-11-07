@@ -7,3 +7,20 @@ Style/FrozenStringLiteralComment:
 
 Style/StringLiterals:
   Enabled: false
+
+Layout/IndentationWidth:
+  Width: 4
+
+Layout/IndentationStyle:
+  EnforcedStyle: spaces
+
+Layout/IndentationConsistency:
+  EnforcedStyle: normal
+
+# Function limits follow docs/quality-policy.md. RuboCop counts body lines
+# without def/end, so 8 here is the policy's 10-line limit.
+Metrics/MethodLength:
+  Max: 8
+
+Metrics/CyclomaticComplexity:
+  Max: 20

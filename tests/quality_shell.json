@@ -1,0 +1,8 @@
+{
+  "root": {
+    "Children": [
+      {"RelPath":"scripts/a.sh","Metrics":{"Functions":[{"Name":"shell_ok","Line":1,"LineCount":10,"Cyclomatic":1,"Cognitive":0},{"Name":"shell_estimate","Line":12,"LineCount":10,"Cyclomatic":21,"Cognitive":15}]}},
+      {"RelPath":"scripts/a.py","Metrics":{"Functions":[{"Name":"ignored","Line":1,"LineCount":99,"Cyclomatic":99,"Cognitive":99}]}}
+    ]
+  }
+}

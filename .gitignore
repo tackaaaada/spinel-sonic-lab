@@ -22,3 +22,7 @@
 
 # Local agent skills
 /.agents/
+
+# Python bytecode
+__pycache__/
+*.pyc

@@ -6,6 +6,8 @@ use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::Score;
+use crate::nrt::NrtScore;
+use crate::sample::SampleAsset;
 use crate::schedule::parse_and_validate_score;
 
 pub(crate) fn compile_and_validate_score(
@@ -27,35 +29,48 @@ fn source_to_ndjson(path: &Path, source: &str) -> Result<String, String> {
         return Ok(source.to_owned());
     }
     let spinel_bin = resolve_spinel_bin();
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let bin_path =
-        env::temp_dir().join(format!("spinel_sonic_lab_{}_{}", std::process::id(), nonce));
-    let compile = Command::new(&spinel_bin)
+    let bin_path = compiled_path();
+    compile_spinel(path, &spinel_bin, &bin_path)?;
+    run_spinel(&bin_path)
+}
+
+fn compiled_path() -> std::path::PathBuf {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    env::temp_dir().join(format!("spinel_sonic_lab_{}_{}", std::process::id(), nonce))
+}
+
+fn compile_spinel(path: &Path, spinel_bin: &str, bin_path: &Path) -> Result<(), String> {
+    let compile = spinel_compile_output(path, spinel_bin, bin_path)?;
+    if compile.status.success() {
+        return Ok(());
+    }
+    let _ = fs::remove_file(bin_path);
+    let detail = command_error_detail(&compile);
+    Err(format!("Spinel compile failed: {detail}"))
+}
+
+fn spinel_compile_output(path: &Path, spinel_bin: &str, bin_path: &Path) -> Result<Output, String> {
+    Command::new(spinel_bin)
         .arg(path)
         .arg("-o")
-        .arg(&bin_path)
+        .arg(bin_path)
         .output()
-        .map_err(|error| format!("failed to invoke Spinel ({spinel_bin}): {error}"))?;
-    if !compile.status.success() {
-        let _ = fs::remove_file(&bin_path);
-        return Err(format!(
-            "Spinel compile failed: {}",
-            command_error_detail(&compile)
-        ));
-    }
-    let run = Command::new(&bin_path).output();
-    let _ = fs::remove_file(&bin_path);
+        .map_err(|error| format!("failed to invoke Spinel ({spinel_bin}): {error}"))
+}
+
+fn run_spinel(bin_path: &Path) -> Result<String, String> {
+    let run = Command::new(bin_path).output();
+    let _ = fs::remove_file(bin_path);
     let run = run.map_err(|error| format!("compiled Spinel execution failed: {error}"))?;
-    if !run.status.success() {
-        return Err(format!(
-            "Spinel composition failed: {}",
-            command_error_detail(&run)
-        ));
-    }
+    ensure_composition_success(&run)?;
     String::from_utf8(run.stdout).map_err(|error| format!("Spinel output was not UTF-8: {error}"))
+}
+
+fn ensure_composition_success(run: &Output) -> Result<(), String> {
+    if run.status.success() {
+        return Ok(());
+    }
+    Err(format!("Spinel composition failed: {}", command_error_detail(run)))
 }
 
 fn command_error_detail(output: &Output) -> String {
@@ -68,45 +83,29 @@ fn command_error_detail(output: &Output) -> String {
 }
 
 fn resolve_spinel_bin() -> String {
-    if let Ok(bin) = env::var("SPINEL_BIN")
-        && !bin.is_empty()
-    {
+    if let Some(bin) = env_spinel_bin() {
         return bin;
     }
-    for candidate in [
-        "../.tools/spinel/bin/spinel",
-        "../../.tools/spinel/bin/spinel",
-    ] {
-        if Path::new(candidate).is_file() {
-            return candidate.to_owned();
-        }
+    if let Some(candidate) = local_spinel_bin() {
+        return candidate.to_owned();
     }
     String::from("spinel")
+}
+
+fn env_spinel_bin() -> Option<String> {
+    env::var("SPINEL_BIN").ok().filter(|bin| !bin.is_empty())
+}
+
+fn local_spinel_bin() -> Option<&'static str> {
+    ["../.tools/spinel/bin/spinel", "../../.tools/spinel/bin/spinel"]
+        .into_iter()
+        .find(|candidate| Path::new(candidate).is_file())
 }
 
 /// Validate every declared asset before muting and before any engine operation.
 pub fn prepare_score(input: &str, base: &Path, mute_track: Option<&str>) -> Result<Score, String> {
     let mut score = parse_and_validate_score(input, None)?;
-    let mut total = 0;
-    for (name, declared) in &score.samples {
-        let path = base
-            .join(declared)
-            .canonicalize()
-            .map_err(|e| format!("sample {name}: {e}"))?;
-        let file = fs::File::open(&path).map_err(|e| format!("sample {name}: {e}"))?;
-        let mut bytes = Vec::new();
-        file.take(crate::sample::MAX_SAMPLE_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| format!("sample {name}: {e}"))?;
-        total += bytes.len();
-        if total > crate::sample::MAX_SCORE_SAMPLE_BYTES {
-            return Err("score sample data exceeds 64MiB".to_owned());
-        }
-        score.sample_assets.insert(
-            name.clone(),
-            crate::sample::SampleAsset::from_wav(path, bytes)?,
-        );
-    }
+    load_assets(&mut score, base)?;
     crate::schedule::Scheduler::plan_playback(&score)?;
     if let Some(track) = mute_track {
         score = score.without_track(track)?;
@@ -114,34 +113,106 @@ pub fn prepare_score(input: &str, base: &Path, mute_track: Option<&str>) -> Resu
     Ok(score)
 }
 
-/// scsynth reads exactly the validated bytes, even if the original file changed.
-pub fn with_sample_snapshot<T>(
-    asset: &crate::sample::SampleAsset,
-    load: impl FnOnce(&Path) -> Result<T, String>,
-) -> Result<T, String> {
-    struct Snapshot(std::path::PathBuf);
-    impl Drop for Snapshot {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.0);
-        }
+fn load_assets(score: &mut Score, base: &Path) -> Result<(), String> {
+    let mut total = 0;
+    for (name, declared) in &score.samples {
+        let asset = load_asset(name, declared, base)?;
+        total += asset.bytes.len();
+        check_sample_total(total)?;
+        score.sample_assets.insert(name.clone(), asset);
     }
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_nanos();
-    let snapshot_path = env::temp_dir().join(format!(
-        "spinel_sample_{}_{}.wav",
-        std::process::id(),
-        nonce
-    ));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&snapshot_path)
-        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn check_sample_total(total: usize) -> Result<(), String> {
+    if total > crate::sample::MAX_SCORE_SAMPLE_BYTES {
+        return Err("score sample data exceeds 64MiB".to_owned());
+    }
+    Ok(())
+}
+
+fn load_asset(name: &str, declared: &str, base: &Path) -> Result<SampleAsset, String> {
+    let path = base.join(declared).canonicalize().map_err(|e| format!("sample {name}: {e}"))?;
+    let bytes = read_sample_bytes(name, &path)?;
+    SampleAsset::from_wav(path, bytes)
+}
+
+fn read_sample_bytes(name: &str, path: &Path) -> Result<Vec<u8>, String> {
+    let file = fs::File::open(path).map_err(|e| format!("sample {name}: {e}"))?;
+    let mut bytes = Vec::new();
+    file.take(crate::sample::MAX_SAMPLE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("sample {name}: {e}"))?;
+    Ok(bytes)
+}
+
+struct Snapshot(std::path::PathBuf);
+
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn snapshot_path() -> Result<std::path::PathBuf, String> {
+    let nonce = current_nonce()?;
+    Ok(env::temp_dir().join(format!("spinel_sample_{}_{}.wav", std::process::id(), nonce)))
+}
+
+fn current_nonce() -> Result<u128, String> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
+    Ok(nonce)
+}
+
+fn write_snapshot(asset: &SampleAsset) -> Result<Snapshot, String> {
+    let snapshot_path = snapshot_path()?;
+    let mut file = open_snapshot(&snapshot_path)?;
     let snapshot = Snapshot(snapshot_path);
     use std::io::Write;
     file.write_all(&asset.bytes).map_err(|e| e.to_string())?;
     drop(file);
+    Ok(snapshot)
+}
+
+fn open_snapshot(path: &Path) -> Result<fs::File, String> {
+    fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e| e.to_string())
+}
+
+/// scsynth reads exactly the validated bytes, even if the original file changed.
+pub fn with_sample_snapshot<T>(
+    asset: &SampleAsset,
+    load: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let snapshot = write_snapshot(asset)?;
     load(&snapshot.0)
+}
+
+/// Renders NRT commands with `scsynth -N` to 48kHz stereo PCM16 at `output` and
+/// returns the validated WAV. The command file sits beside `output` until scsynth exits.
+pub fn render_nrt(commands: &NrtScore, output: &Path) -> Result<SampleAsset, String> {
+    let score = output.with_extension("osc");
+    fs::write(&score, commands.bytes()).map_err(|e| format!("NRT score write failed: {e}"))?;
+    let run = scsynth_nrt_output(&score, output);
+    let _ = fs::remove_file(&score);
+    ensure_render_success(&run?)?;
+    let bytes = fs::read(output).map_err(|e| format!("rendered WAV read failed: {e}"))?;
+    SampleAsset::from_wav(output.to_path_buf(), bytes)
+}
+
+fn scsynth_nrt_output(score: &Path, output: &Path) -> Result<Output, String> {
+    Command::new("scsynth")
+        .arg("-N")
+        .args([score.as_os_str(), "_".as_ref(), output.as_os_str()])
+        .args(["48000", "WAV", "int16", "-i", "0", "-o", "2"])
+        .output()
+        .map_err(|error| format!("failed to invoke scsynth: {error}"))
+}
+
+/// scsynth exits successfully even when a command such as `/s_new` fails.
+fn ensure_render_success(run: &Output) -> Result<(), String> {
+    let log = String::from_utf8_lossy(&run.stdout);
+    if run.status.success() && !log.contains("FAILURE IN SERVER") {
+        return Ok(());
+    }
+    Err(format!("scsynth NRT render failed: {}", command_error_detail(run)))
 }

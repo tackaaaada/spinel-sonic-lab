@@ -34,6 +34,32 @@ The deterministic clock test checks first-note lead, 250ms timestamp differences
 
 The OSC target is `127.0.0.1:57110` by default. There is no network performance, FFI, GUI, or custom DSP in this version.
 
+## Console channel path
+
+`TrackScore` can now place `ha gain_db:`, `pan position:`, and `fader db:` above its
+four-bar Grid loop. The composer emits one validated `channel` declaration
+per configured track before playback events. Rust validates channel names,
+levels, pan position, duplicates, and declaration order before playback or
+mute. The scheduler applies the H/A and Fader level to synth and sample
+amplitudes and carries only the pan value to OSC; track names and protocol
+objects do not enter the OSC packet. The generated SynthDefs use `Pan2` for
+mono signals and `Balance2` for stereo samples, with a center correction that
+preserves existing center output levels.
+
+A track whose channel has Dynamics, EQ, or an Aux send is routed instead.
+`schedule.rs` marks its playback events with a logical route (the track name)
+and leaves their level at unity and pan at center. `mixer.rs` owns the engine
+side: one private stereo bus and one persistent `channel_strip` node per routed
+track, one `aux_return` node per used return, node IDs, bus numbers,
+boundary-timed control updates, and retirement after the last source end (plus
+a 3-second reverb tail for returns). `osc.rs` resolves the route to the bus
+when encoding `/s_new` (`out`), creates a strip group and a following return
+group at the tail of the root group so sources (root head) run first, and
+sends `/n_set` bundles timetagged at the bar boundary. A watch reload commits
+only after sample buffers and the graph are prepared; a failed node creation
+frees the new nodes and keeps the active graph. Full design notes are in
+[`console-grid-dsl.md`](console-grid-dsl.md).
+
 
 
 ## Sampler
@@ -56,6 +82,30 @@ and cleans up temporary snapshots after each load response. Mono and stereo
 have separate `PlayBuf` SynthDefs in `synthdefs/sampler.scd`; `BufRateScale` keeps
 original speed and `OffsetOut` preserves sample scheduling offsets. Whole-file
 playback frees the node at its end. This uses SuperCollider standard UGens.
+
+Frees follow the server's timeline rather than the CLI's. `SampleBuffers` and
+`ChannelGraph` stay clock-free: `release_finished` removes buffers and retired
+nodes whose reservations have ended and returns `BufferRelease`/`NodeRelease`
+values with their last use. The engine stamps each `/b_free` or `/n_free` at that
+time plus a 20 ms margin, so scsynth runs it after the sound that uses it even
+when its clock lags; immediate frees remain only for resources that never
+played (failed preparation). Buffer IDs and strip buses are handed out in
+rotation, so a released ID is not reused while its stamped free may still be
+pending. At the end, `release_all` returns everything, and one bundle stamped
+after the last sound frees the buffers and both groups and ends with `/sync`; it
+is dispatched with the notes' 200 ms lead and the CLI exits only after
+`/synced`, so the next run cannot lose its nodes or buffers to a pending free.
+
+Offline rendering reuses the live path. `nrt.rs` plans a validated score with
+`Scheduler::plan_playback`, prepares `SampleBuffers` and `ChannelGraph` through
+a recording backend, and writes each simultaneous group with the same OSC
+bundle encoder as live playback, using timetags counted from the file start.
+Engine setup sits at time zero and an empty bundle sets the file length (the
+last event end plus any reverb tail, or a fixed length). `nrt.rs` has no file
+or process access; `source.rs::render_nrt` writes the command file, runs
+`scsynth -N`, rejects `FAILURE IN SERVER` logs, and validates the WAV. The
+`render_nrt` binary and `core/tests/audio_render_tests.rs` use this path, so
+the audio checks measure the packets that live playback sends.
 
 Watch preflights candidate engine resources before `LiveScheduler` changes its
 active score. Source failures, invalid WAVs, muted-score errors, and engine load

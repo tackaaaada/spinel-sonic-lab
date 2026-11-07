@@ -52,6 +52,18 @@ mise run play
 
 最初は機器の音量を小さくする。CLIの`scsynth accepted ... note commands`は受理の確認であり、人に音が聞こえたこととは別。
 
+### コマンドは成功するが音が聞こえない場合
+
+`scsynth -u 57110` を直接起動した場合、SuperColliderの出力がPipeWireの出力先につながらないことがある。`pw-link -l` で `SuperCollider:out_1` と `out_2` の接続を確認する。未接続なら、現在の既定出力へ左右をつなぐ:
+
+```sh
+sink=$(pactl get-default-sink)
+pw-link SuperCollider:out_1 "${sink}:playback_FL"
+pw-link SuperCollider:out_2 "${sink}:playback_FR"
+```
+
+2026-11-01にはCLIが56音の受理を報告しても無音だった。実行中のSuperCollider出力に接続がないことを確認し、上記の左右接続後に同じ4小節を再生して利用者が音を確認した。接続は実行中のサーバーに対するもので、サーバー再起動後は再確認する。
+
 ## ライブ編集
 
 音声サーバーを起動したまま、別のターミナルで:
@@ -69,6 +81,7 @@ nvim composer/bin/live_session.rb
 ```
 
 有効な変更は次の4拍の小節境界で反映される。無効な変更は直前の有効なスコアの再生を継続する。
+2026-11-01に利用者は`live_session.rb`のcutoff変更が保存後およそ2〜3拍で聞こえたと報告した。これはライブ編集の聴感確認であり、切替時刻の実測ではない。
 
 再生と音声サーバーの停止は、それぞれのターミナルでCtrl+C。
 Herdrから画面を抜けるCtrl+B→Dは作業を保持する操作で、停止ではない。
@@ -82,11 +95,11 @@ Herdrから画面を抜けるCtrl+B→Dは作業を保持する操作で、停�
 
 ## 検証状況
 
-- Rust全27テストとSpinel作曲例検証はLinux上で成功済み。
+- Rust全43テストとSpinel作曲例検証はLinux上で成功済み（2026-11-01）。UDP時刻テスト2件もホスト権限で成功。
 - `mise run check-score`は4音の予定を表示して成功。
 - `mise run synthdef`で音源定義の生成成功。
 - NeovimのSuperColliderファイル認識、SCNvimStart登録、sclangパスを確認。
-- PipeWire-JACK導入済み。48000Hzでサーバー起動、左右出力からMac System Defaultへの接続、4音の演奏コマンド受理まで確認済み。USB機器から実際に聞こえたかはユーザー確認待ち。
+- PipeWire-JACK導入済み。48000Hzでサーバー起動し、2026-11-01にはSuperCollider左右出力を既定のOmarchy音声出力へ接続した後、サンプラー例の4小節が聞こえたことを利用者確認済み。後のテクノ試作ではキックとベースの現在のバランスを利用者がOKとした。
 
 音色・ゲイン・OSC契約・演奏ロジックは変更していない。
 

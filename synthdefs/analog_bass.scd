@@ -1,5 +1,5 @@
 (
-SynthDef(\analog_bass, { |out = 0, freq = 65.4, amp = 0.1, gain = 1, dur = 0.25, cutoff = 0, attack = 0.01, decay = 0, sustain = 1, release = 0.09, lfoRate = 0, lfoDepth = 0, osc = 0|
+SynthDef(\analog_bass, { |out = 0, freq = 65.4, amp = 0.1, gain = 1, dur = 0.25, cutoff = 0, attack = 0.01, decay = 0, sustain = 1, release = 0.09, lfoRate = 0, lfoDepth = 0, osc = 0, pan = 0|
     var signal, wave, envelope, effectiveCutoff, movingCutoff, attackTime, decayTime, hold, releaseTime, envelopeScale;
     var isKick, isNoise, isHat, kickFreq, snareFreq, noiseWave, envSustain;
     isKick = (osc >= 0.5) * (osc <= 1.5) * (sustain <= 0.05);
@@ -33,7 +33,7 @@ SynthDef(\analog_bass, { |out = 0, freq = 65.4, amp = 0.1, gain = 1, dur = 0.25,
         0.72
     ]);
     envelope = EnvGen.kr(Env([0, 1, envSustain, envSustain, 0], [attackTime, decayTime, hold, releaseTime]), doneAction: 2);
-    Out.ar(out, (signal * envelope * amp * gain) ! 2);
+    Out.ar(out, Pan2.ar(signal * envelope * amp * gain * 1.41421356, pan));
 }).writeDefFile("synthdefs");
 0.exit;
 )

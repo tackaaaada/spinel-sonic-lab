@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
-    mpsc::{self, Receiver},
+    mpsc::{self, Receiver, Sender},
 };
 use std::thread;
 use std::time::Duration;
@@ -12,9 +12,24 @@ use crate::model::Score;
 use crate::schedule::{LiveScheduler, ScheduledBar};
 use crate::source::compile_and_validate_score;
 
-pub struct ScoreWatcher {
+type Prepare<'a> = dyn FnMut(&Score) -> Result<(), String> + 'a;
+type PollSender = Sender<Result<Score, String>>;
+
+/// The watched score file and the track muted on every compile.
+#[derive(Clone)]
+struct WatchedFile {
     path: PathBuf,
     mute_track: Option<String>,
+}
+
+impl WatchedFile {
+    fn compile(&self, source: &str) -> Result<Score, String> {
+        compile_and_validate_score(&self.path, source, self.mute_track.as_deref())
+    }
+}
+
+pub struct ScoreWatcher {
+    file: WatchedFile,
     last_source: String,
     first_bar: bool,
     staged_warning: Option<String>,
@@ -24,29 +39,29 @@ pub struct ScoreWatcher {
 
 impl ScoreWatcher {
     pub fn from_path(path: impl Into<PathBuf>, mute_track: Option<String>) -> Result<Self, String> {
-        let path = path.into();
-        let source =
-            fs::read_to_string(&path).map_err(|error| format!("score read failed: {error}"))?;
-        let score = compile_and_validate_score(&path, &source, mute_track.as_deref())?;
-        Ok(Self {
-            path,
-            mute_track,
-            last_source: source,
-            first_bar: true,
-            staged_warning: None,
-            background: None,
-            live: LiveScheduler::new(score),
-        })
+        let file = WatchedFile { path: path.into(), mute_track };
+        let source = fs::read_to_string(&file.path)
+            .map_err(|error| format!("score read failed: {error}"))?;
+        let score = file.compile(&source)?;
+        Ok(Self::from_score(file, source, score))
+    }
+
+    fn from_score(file: WatchedFile, last_source: String, score: Score) -> Self {
+        let live = LiveScheduler::new(score);
+        Self { file, last_source, first_bar: true, staged_warning: None, background: None, live }
     }
 
     pub fn start_background_poller(&mut self, poll_interval: Duration) {
         if self.background.is_none() {
-            self.background = Some(BackgroundPoller::start(
-                self.path.clone(),
-                self.mute_track.clone(),
-                self.last_source.clone(),
-                poll_interval,
-            ));
+            self.background = Some(BackgroundPoller::start(self.poll_request(poll_interval)));
+        }
+    }
+
+    fn poll_request(&self, poll_interval: Duration) -> PollRequest {
+        PollRequest {
+            file: self.file.clone(),
+            last_source: self.last_source.clone(),
+            poll_interval,
         }
     }
 
@@ -54,7 +69,7 @@ impl ScoreWatcher {
         self.stage_reload_with(&mut |_| Ok(()));
     }
 
-    fn stage_reload_with(&mut self, prepare: &mut dyn FnMut(&Score) -> Result<(), String>) {
+    fn stage_reload_with(&mut self, prepare: &mut Prepare<'_>) {
         if let Some(background) = &self.background {
             let results: Vec<_> = background.receiver.try_iter().collect();
             for result in results {
@@ -62,41 +77,38 @@ impl ScoreWatcher {
             }
             return;
         }
-        match fs::read_to_string(&self.path) {
-            Ok(source) => {
-                if source != self.last_source {
-                    self.last_source = source;
-                    let result = compile_and_validate_score(
-                        &self.path,
-                        &self.last_source,
-                        self.mute_track.as_deref(),
-                    );
-                    self.apply_reload_result(result, prepare);
-                }
-            }
-            Err(error) => {
-                self.staged_warning = Some(format!("score read failed: {error}"));
-            }
+        self.stage_file_reload(prepare);
+    }
+
+    fn stage_file_reload(&mut self, prepare: &mut Prepare<'_>) {
+        match fs::read_to_string(&self.file.path) {
+            Ok(source) if source != self.last_source => self.stage_source(source, prepare),
+            Ok(_) => {}
+            Err(error) => self.staged_warning = Some(format!("score read failed: {error}")),
         }
     }
 
-    fn apply_reload_result(
-        &mut self,
-        result: Result<Score, String>,
-        prepare: &mut dyn FnMut(&Score) -> Result<(), String>,
-    ) {
+    fn stage_source(&mut self, source: String, prepare: &mut Prepare<'_>) {
+        self.last_source = source;
+        let result = self.file.compile(&self.last_source);
+        self.apply_reload_result(result, prepare);
+    }
+
+    fn apply_reload_result(&mut self, result: Result<Score, String>, prepare: &mut Prepare<'_>) {
         let result = result.and_then(|score| {
             prepare(&score)?;
             Ok(score)
         });
+        self.commit_reload_result(result);
+    }
+
+    fn commit_reload_result(&mut self, result: Result<Score, String>) {
         match result {
             Ok(score) => {
                 self.live.apply_score(score);
                 self.staged_warning = None;
             }
-            Err(error) => {
-                self.staged_warning = Some(error);
-            }
+            Err(error) => self.staged_warning = Some(error),
         }
     }
 
@@ -110,18 +122,22 @@ impl ScoreWatcher {
 
     pub fn next_bar_with(
         &mut self,
-        prepare: &mut dyn FnMut(&Score) -> Result<(), String>,
+        prepare: &mut Prepare<'_>,
     ) -> Result<(ScheduledBar, Option<String>), String> {
-        let warning = if self.first_bar {
-            prepare(self.live.score())?;
-            self.first_bar = false;
-            None
-        } else {
-            self.stage_reload_with(prepare);
-            self.staged_warning.take()
-        };
+        let warning = self.prepare_next_bar(prepare)?;
         let bar = self.live.next_bar()?;
         Ok((bar, warning))
+    }
+
+    fn prepare_next_bar(&mut self, prepare: &mut Prepare<'_>) -> Result<Option<String>, String> {
+        if self.first_bar {
+            prepare(self.live.score())?;
+            self.first_bar = false;
+            Ok(None)
+        } else {
+            self.stage_reload_with(prepare);
+            Ok(self.staged_warning.take())
+        }
     }
 }
 
@@ -130,55 +146,63 @@ struct BackgroundPoller {
     stop: Arc<AtomicBool>,
 }
 
+struct PollRequest {
+    file: WatchedFile,
+    last_source: String,
+    poll_interval: Duration,
+}
+
 impl BackgroundPoller {
-    fn start(
-        path: PathBuf,
-        mute_track: Option<String>,
-        last_source: String,
-        poll_interval: Duration,
-    ) -> Self {
+    fn start(request: PollRequest) -> Self {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
-        let mut last_source = last_source;
-
-        thread::spawn(move || {
-            while !thread_stop.load(Ordering::Relaxed) {
-                thread::sleep(poll_interval);
-                if thread_stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                let read_result = match fs::read_to_string(&path) {
-                    Ok(text) if text.trim().is_empty() => {
-                        thread::sleep(Duration::from_millis(15));
-                        fs::read_to_string(&path)
-                    }
-                    other => other,
-                };
-                match read_result {
-                    Ok(source) => {
-                        if source != last_source {
-                            last_source = source;
-                            let result = compile_and_validate_score(
-                                &path,
-                                &last_source,
-                                mute_track.as_deref(),
-                            );
-                            if tx.send(result).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        if tx.send(Err(format!("score read failed: {error}"))).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-
+        thread::spawn(move || request.run(tx, thread_stop));
         Self { receiver: rx, stop }
+    }
+}
+
+impl PollRequest {
+    fn run(mut self, tx: PollSender, stop: Arc<AtomicBool>) {
+        while !stop.load(Ordering::Relaxed) {
+            if !self.poll_and_send(&tx, &stop) {
+                break;
+            }
+        }
+    }
+
+    fn poll_and_send(&mut self, tx: &PollSender, stop: &AtomicBool) -> bool {
+        thread::sleep(self.poll_interval);
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        match self.poll() {
+            Some(result) => tx.send(result).is_ok(),
+            None => true,
+        }
+    }
+
+    fn poll(&mut self) -> Option<Result<Score, String>> {
+        match self.read_source() {
+            Ok(source) if source != self.last_source => Some(self.compile_source(source)),
+            Ok(_) => None,
+            Err(error) => Some(Err(format!("score read failed: {error}"))),
+        }
+    }
+
+    fn compile_source(&mut self, source: String) -> Result<Score, String> {
+        self.last_source = source;
+        self.file.compile(&self.last_source)
+    }
+
+    fn read_source(&self) -> std::io::Result<String> {
+        match fs::read_to_string(&self.file.path) {
+            Ok(text) if text.trim().is_empty() => {
+                thread::sleep(Duration::from_millis(15));
+                fs::read_to_string(&self.file.path)
+            }
+            other => other,
+        }
     }
 }
 
@@ -191,6 +215,8 @@ impl Drop for BackgroundPoller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schedule::midi_to_frequency;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     const SOURCE: &str = concat!(
         "{\"type\":\"tempo\",\"bpm\":120}\n",
@@ -201,14 +227,9 @@ mod tests {
 
     impl ScoreFile {
         fn new() -> Self {
-            let file = Self(std::env::temp_dir().join(format!(
-                "spinel_background_test_{}_{}.ndjson",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            )));
+            let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+            let name = format!("spinel_background_test_{}_{nanos}.ndjson", std::process::id());
+            let file = Self(std::env::temp_dir().join(name));
             fs::write(&file.0, SOURCE).unwrap();
             file
         }
@@ -220,54 +241,60 @@ mod tests {
         }
     }
 
+    fn edited_source() -> String {
+        SOURCE.replace("\"note\":36", "\"note\":48")
+    }
+
+    fn start_worker(file: &ScoreFile) -> BackgroundPoller {
+        let file = WatchedFile { path: file.0.clone(), mute_track: None };
+        let poll_interval = Duration::from_millis(10);
+        BackgroundPoller::start(PollRequest { file, last_source: SOURCE.to_owned(), poll_interval })
+    }
+
+    /// Waits for the worker's next result with a bounded timeout, never a fixed sleep.
+    fn next_result(worker: &BackgroundPoller) -> Result<Score, String> {
+        let result = worker.receiver.recv_timeout(Duration::from_secs(2));
+        result.expect("background worker did not report the edit")
+    }
+
     #[test]
     fn background_worker_delivers_valid_scores_and_validation_errors() {
         let file = ScoreFile::new();
-        let worker = BackgroundPoller::start(
-            file.0.clone(),
-            None,
-            SOURCE.to_owned(),
-            Duration::from_millis(10),
-        );
-        fs::write(&file.0, SOURCE.replace("\"note\":36", "\"note\":48")).unwrap();
-        let score = worker
-            .receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("background worker did not deliver the edit")
-            .unwrap();
-        assert_eq!(score.events[0].note, 48);
-
+        let worker = start_worker(&file);
+        fs::write(&file.0, edited_source()).unwrap();
+        assert_eq!(next_result(&worker).unwrap().events[0].note, 48);
         fs::write(&file.0, "invalid JSON").unwrap();
-        let result = worker
-            .receiver
-            .recv_timeout(Duration::from_secs(2))
-            .expect("background worker did not report the invalid edit");
-        assert!(result.unwrap_err().contains("invalid JSON"));
+        assert!(next_result(&worker).unwrap_err().contains("invalid JSON"));
+    }
+
+    /// Plays the first bar, then queues a valid edit followed by an invalid one.
+    fn watcher_with_queued_edit_and_error(file: &ScoreFile) -> ScoreWatcher {
+        let mut watcher = ScoreWatcher::from_path(&file.0, None).unwrap();
+        watcher.next_bar().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        watcher.background = Some(BackgroundPoller { receiver, stop: Arc::default() });
+        sender.send(Ok(Score::parse_ndjson(&edited_source()).unwrap())).unwrap();
+        sender.send(Err("invalid edit".to_owned())).unwrap();
+        watcher
     }
 
     #[test]
     fn queued_updates_keep_the_latest_valid_score_and_report_a_later_error() {
         let file = ScoreFile::new();
-        let mut watcher = ScoreWatcher::from_path(&file.0, None).unwrap();
-        watcher.next_bar().unwrap();
-        let (sender, receiver) = mpsc::channel();
-        watcher.background = Some(BackgroundPoller {
-            receiver,
-            stop: Arc::new(AtomicBool::new(false)),
-        });
-        let updated = Score::parse_ndjson(&SOURCE.replace("\"note\":36", "\"note\":48")).unwrap();
-        sender.send(Ok(updated)).unwrap();
-        sender.send(Err("invalid edit".to_owned())).unwrap();
-
+        let mut watcher = watcher_with_queued_edit_and_error(&file);
         let (bar, warning) = watcher.next_bar().unwrap();
         assert_eq!(bar.start, Duration::from_secs(2));
-        assert_eq!(
-            bar.notes[0].frequency,
-            crate::schedule::midi_to_frequency(48)
-        );
+        assert_eq!(bar.notes[0].frequency, midi_to_frequency(48));
         assert_eq!(warning.as_deref(), Some("invalid edit"));
+    }
+
+    #[test]
+    fn a_reported_reload_error_keeps_the_score_and_is_not_repeated() {
+        let file = ScoreFile::new();
+        let mut watcher = watcher_with_queued_edit_and_error(&file);
+        watcher.next_bar().unwrap();
         let (next, warning) = watcher.next_bar().unwrap();
-        assert_eq!(next.notes[0].frequency, bar.notes[0].frequency);
+        assert_eq!(next.notes[0].frequency, midi_to_frequency(48));
         assert!(warning.is_none());
     }
 }

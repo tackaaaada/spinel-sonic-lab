@@ -1,0 +1,16 @@
+{"type":"tempo","bpm":120,"bars":4}
+{"type":"sample","name":"kick","path":"../../samples/kick.wav"}
+{"type":"channel","track":"kick","ha_gain_db":6.000,"pan":-1.000,"fader_db":-6.000}
+{"type":"channel","track":"bass","ha_gain_db":0.000,"pan":1.000,"fader_db":-6.000}
+{"type":"sample_note","sample":"kick","track":"kick","beat":0.0000,"velocity":0.400}
+{"type":"sample_note","sample":"kick","track":"kick","beat":1.0000,"velocity":0.400}
+{"type":"sample_note","sample":"kick","track":"kick","beat":4.0000,"velocity":0.400}
+{"type":"sample_note","sample":"kick","track":"kick","beat":5.0000,"velocity":0.400}
+{"type":"sample_note","sample":"kick","track":"kick","beat":8.0000,"velocity":0.400}
+{"type":"sample_note","sample":"kick","track":"kick","beat":9.0000,"velocity":0.400}
+{"type":"sample_note","sample":"kick","track":"kick","beat":12.0000,"velocity":0.400}
+{"type":"sample_note","sample":"kick","track":"kick","beat":13.0000,"velocity":0.400}
+{"type":"note","instrument":"analog_bass","track":"bass","note":48,"beat":0.0000,"duration_beats":0.5000,"velocity":0.500}
+{"type":"note","instrument":"analog_bass","track":"bass","note":48,"beat":4.0000,"duration_beats":0.5000,"velocity":0.500}
+{"type":"note","instrument":"analog_bass","track":"bass","note":48,"beat":8.0000,"duration_beats":0.5000,"velocity":0.500}
+{"type":"note","instrument":"analog_bass","track":"bass","note":48,"beat":12.0000,"duration_beats":0.5000,"velocity":0.500}

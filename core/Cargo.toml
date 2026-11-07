@@ -2,7 +2,12 @@
 name = "spinel-sonic-lab"
 version = "0.1.0"
 edition = "2024"
+default-run = "spinel-sonic-lab"
 
 [dependencies]
 serde_json = "=1.0.151"
 
+
+[lints.clippy]
+# Function length limit from docs/quality-policy.md; the threshold is in clippy.toml.
+too_many_lines = "deny"
