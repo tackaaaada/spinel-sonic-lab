@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-> **ステータス: 開発中(v0.x)。** DSL、NDJSONプロトコル、CLIオプションは予告なく変わる可能性があります。[ロードマップ](docs/roadmap.md)(日本語)を参照してください。
+> **ステータス: 開発中(v0.x)。** DSL、NDJSONプロトコル、CLIオプションは予告なく変わる可能性があります。[ロードマップ](docs/roadmap.ja.md)(日本語)を参照してください。
 
 最小構成のコマンドライン音楽環境です。Spinel互換のRubyでベースやドラムのパターンを書き、ネイティブのコンポーザーにコンパイルして、SuperColliderの `scsynth` でライブ演奏します。
 
@@ -120,8 +120,8 @@ score.emit
 | コンソール風グリッドDSL | [docs/console-grid-dsl.md](docs/console-grid-dsl.md) |
 | 出力レベルと試聴ファイル | [docs/audio-levels.md](docs/audio-levels.md) |
 | ドラム素材と再生成手順 | [samples/README.md](samples/README.ja.md) |
-| ロードマップ | [docs/roadmap.md](docs/roadmap.md) |
-| Omarchyでの開発・音が出ない場合 | [docs/development-omarchy.md](docs/development-omarchy.md) |
+| ロードマップ | [docs/roadmap.md](docs/roadmap.ja.md) |
+| Omarchyでの開発・音が出ない場合 | [docs/development-omarchy.md](docs/development-omarchy.ja.md) |
 
 ## 開発
 

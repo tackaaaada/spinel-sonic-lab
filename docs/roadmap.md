@@ -1,70 +1,45 @@
-# 開発ロードマップと残作業
+# Roadmap and remaining work
 
-2026-11-01時点の実装・テスト・利用者確認との照合。
-バージョン表は開発段階を示す。リリース済みバージョンの宣言ではない（Cargoのpackage versionは現在0.1.0）。
+[日本語](roadmap.ja.md)
 
-| 段階 | 主な開発 | 現状 | 残作業 |
+Status as of 2026-11-01 (implementation, tests and the author's listening checks). The version column marks development stages, not released versions (the Cargo package version is 0.1.0).
+
+| Stage | Focus | Status | Remaining |
 |---|---|---|---|
-| v0.1 | Spinel → Rust → SuperColliderで発音 | 実装済み・実機聴感確認済み | 今回の4音で均等な発音間隔を利用者確認済み |
-| v0.2 | オシレーター・ADSR・フィルター | 実装済み | この表の機能粒度では追加の必須項目なし |
-| v0.3 | 16ステップシーケンサー・マルチトラック | 実装済み | 同上 |
-| v0.4 | Rubyライクな音楽DSL | 基本機能と4小節のトラック内パターン構文を実装済み。小節ごとに4〜64分音符Gridと音名付きhitsを指定可能。Grid hitsの音長・強さと、卓型DSLのH/A・Dynamics・EQ・Aux・Pan・Faderの構文を追加 | 8小節の構文とトラックごとに異なる一巡長は未対応。Dynamics・EQ・Auxは常駐チャンネルストリップで再生可能（聴感確認は未実施） |
-| v0.5 | ライブコーディング | ファイル保存による再コンパイル・小節切替を実装。cutoff変更が保存後約2〜3拍で聞こえたことを利用者確認 | 厳密な切替境界の実測は未了。対話型REPLは実装していない |
-| v0.6 | 音源プリセット・サンプラー | コード・SynthDef生成・OSC再生・実音をホストで確認済み。テクノ試作のキックとベースは現時点OK | 保存編集の実機確認。別の編曲・音源の聴感は個別に評価 |
-| v1.0 | 音楽制作環境として統合 | 完成条件を未定義 | 制作の流れと受け入れ条件を利用者と具体化する |
+| v0.1 | Spinel → Rust → SuperCollider sound | Done; confirmed by listening | — |
+| v0.2 | Oscillators, ADSR, filter | Done | None at this granularity |
+| v0.3 | 16-step sequencer, multi-track | Done | None at this granularity |
+| v0.4 | Ruby-like music DSL | Basics and 4-bar in-track patterns done: per-bar 4–64th grids, named-pitch `hits`, hit length and velocity, and console-style H/A, Dynamics, EQ, Aux, Pan and Fader syntax | 8-bar syntax and per-track loop lengths. Dynamics/EQ/Aux play through persistent channel strips (not yet checked by listening) |
+| v0.5 | Live coding | Recompile on save and bar-boundary switching done; a cutoff change was heard about 2–3 beats after saving | Exact switch boundary not measured; no interactive REPL |
+| v0.6 | Presets and sampler | Code, SynthDef generation, OSC playback and sound confirmed on the host; the techno sketch's kick/bass balance is OK for now | Hardware check of saved edits; other arrangements judged individually |
+| v1.0 | Integrated music-making environment | Completion criteria not defined | Define the workflow and acceptance criteria |
 
-## 実装済みの根拠
+## Where things are implemented
 
-- 発音・時刻指定: `core/src/main.rs`、`core/src/osc.rs`。200ms先行の未来NTP timetagで送信。最初のド→ミを含めて均等に聴こえることを利用者確認済み。
-- 音色: `core/src/model.rs`、`synthdefs/analog_bass.scd`。Saw/Sine/Pulse/Noise、ADSR、LPF、フィルターLFO、gain。
-- パターンとDSL: `composer/lib/score_writer.rb` と `composer/lib/track_score.rb`。音名、和音、アルペジオ、16ステップ、複数小節ループ、名前付きトラック、トラック別音色、ミュート。4小節の `track` / `loop bars: 4` / `bar grid: 4, 8, 16, 32, 64` / `hits` は別の構文として実装。
-- ライブ編集: `core/src/source.rs`、`core/src/watch.rs`、`core/src/schedule.rs`。Spinelコンパイル、バックグラウンド検証、小節境界での切替、無効な更新時の継続。発音境界の200ms前が更新受付締切。
-- プリセット: `soft`、`bright`、`wobble`、`kick`、`snare`、`hat`。composerが通常のtoneイベントへ展開する。現在のドラムは合成音であり、録音サンプルを再生するものではない。
-- 検証: `core/tests/core_tests.rs`、`core/tests/live_tests.rs`、`core/src/main.rs`の時刻計算テスト、`tests/check_spinel.sh`。実送信の`core/tests/timing_tests.rs`は2026-11-01にホスト権限で2件成功。
+- **Timing:** `core/src/main.rs`, `core/src/osc.rs`. Bundles carry future NTP timetags with a 200 ms lead.
+- **Tones:** `core/src/model.rs`, `synthdefs/analog_bass.scd` — Saw/Sine/Pulse/Noise, ADSR, low-pass filter, filter LFO, gain.
+- **Patterns and DSL:** `composer/lib/score_writer.rb`, `composer/lib/track_score.rb` — pitch names, chords, arpeggios, 16-step patterns, multi-bar loops, named tracks, per-track tones, muting; plus the 4-bar `track` / `loop bars: 4` / `bar grid:` / `hits` syntax.
+- **Live editing:** `core/src/source.rs`, `watch.rs`, `schedule.rs` — Spinel compilation, background validation, bar-boundary switching, keeping the active score on invalid edits. Edits are accepted until 200 ms before the audible boundary.
+- **Presets:** `soft`, `bright`, `wobble`, `kick`, `snare`, `hat`, expanded by the composer into ordinary `tone` events.
+- **Tests:** `core/tests/`, `tests/check_spinel.sh`, plus `mise run audio-check` for offline audio measurements.
 
-## v0.6サンプラーの実装記録
+## Sampler (v0.6)
 
-原音程・全長再生を選択済み。以下の実装を小さなRed-Green-Refactorサイクルで追加した。ホスト側のSynthDef生成、OSC送信、UDP時刻テストは2026-11-01に確認済み。PipeWireの出力接続後に利用者が実音を確認した。テクノ試作のキックとベースは現時点でOK。保存編集の実機確認を残す。
+Whole-file, original-pitch playback is implemented: sample declarations and `sample_note` events, DSL helpers, WAV validation before any OSC, merged scheduling with synth notes, buffer lifetime management, and rollback if engine preparation fails on a live reload. `mise run play-samples` and `mise run watch-samples` run it. The drum WAVs in `samples/` are rendered from the project's own SynthDefs (see [samples/README.md](../samples/README.md)).
 
-1. 音源宣言・再生イベントの契約を具体化し、既存v0.1スコアの互換性と不正入力の拒否をテストする。
-2. SpinelのDSLからイベントを生成する。実Spinelコンパイルとfixture比較で検証する。
-3. Rustで合成音とサンプルを同じ音楽時刻へ配置し、同時発音・トラックミュートを時計待ちなしで検証する。
-4. SuperColliderの標準バッファ再生機能へつなぐ。ファイル検証、ロード完了待ち、バッファの所有と解放を音楽イベントから分離する。
-5. ライブ更新で音源の追加・変更・失敗があっても有効な演奏を維持する。未来に予約した発音がある間は参照中の音源を解放しない。
-6. SynthDef再生成、全Rustテスト、全Spinel構成検証、音声サーバーとCLIのログ確認、利用者の聴感確認を行う。
+## v1.0 completion criteria (undecided)
 
-一斉に全機能を追加せず、まず一つのWAVを指定時刻に再生する縦の経路を完成させる。音階演奏・ループ・テンポ追従は同じ要件ではないため、選択した対象の完成条件を別々に決める。
+For a CLI-centred environment the candidate workflow is: prepare a composition → validate → listen → live-edit → export WAV. Preview WAVs exist, but there is no product CLI that exports an arbitrary user score to WAV. GUI, interactive REPL, MIDI input and external plugins are out of scope for the current MVP.
 
-## v1.0の完成条件候補（未決定）
+## Long-term sound goals (proposed, not implemented)
 
-CLIでの統合を選ぶ場合は、作曲ファイルの用意 → 検証 → 試聴 → ライブ編集 → WAV書き出し、という一連の操作を候補とする。現在プレビューWAVは存在するが、任意の利用者スコアをWAVへ書き出す製品用CLIはない。
+The author wants to build tracks whose tone moves step by step, with drum sounds inspired by the Roland TR-1000 and bass sounds inspired by the TB-303 / Devil Fish. Reproducing any machine's full circuit or feature set is not claimed.
 
-GUI、対話型REPL、MIDI入力、外部プラグイン対応は現在のMVPの範囲に含まれない。v1.0という名称だけで自動的に追加要件とはしない。
+Today `tone` applies per score or track, and the sampler offers original-pitch whole-file playback with per-step velocity. Per-step cutoff, slides between notes, accent-linked volume and filter, resonance and overdrive are not implemented.
 
-### サンプル素材の準備
+Candidate steps:
 
-SuperColliderの既存ドラムSynthDefをNRT描画し、`samples/kick.wav`・`snare.wav`・`hat.wav`を生成済み。再生成・形式とレベルの検証手順は `samples/README.md`。これらを指定拍で原音程再生するサンプラー経路を追加済み。ホスト側のOSC送信と実音は確認済み。
-
-
-### サンプラー実装
-
-原音程・全長再生のWAVサンプラーを追加。`mise run play-samples` と
-`mise run watch-samples` を用意した。DSL・NDJSON・WAV検証・混在スケジュール・
-エンジン準備失敗時のロールバック・バッファ寿命をテスト。
-制限環境ではsclangのネットワーク初期化とUDPが制限されたが、
-2026-11-01にホスト権限でSynthDef生成と実送信を確認した。素材単体とサンプラー例の実音は利用者確認済み。テクノ試作のキックとベースは現時点でOK、サンプラー例の個別バランス評価は未了。
-
-## 長期の音作り目標（2026-11-01提案・未実装）
-
-利用者の目標は、ステップごとに音色を動かして曲を作り、[TR-1000](https://www.roland.com/global/products/tr-1000/)を参照したドラム音と、[TB-303](https://cdn.roland.com/assets/media/pdf/TB-303_OM.pdf)／[Devil Fish](https://www.firstpr.com.au/rwi/dfish/)を参照したベース音をこの環境で表現すること。ベース機は利用者確認済みのTB-303を対象とする。機種全体の回路・機能の再現を達成済みとは扱わない。
-
-現状の`tone`はスコアまたはトラック単位、WAVサンプラーは原音程・全長再生とステップごとの音量指定まで。シンセ音は各ノートで独立したノードを作る。ステップごとのカットオフ等の音色指定、連続するノート間のスライド、アクセントによる音量とフィルターの連動、共鳴やオーバードライブは未実装。
-
-進め方の候補:
-
-1. 比較したいキック・スネア・ハイハットとベースの短い参照音／パターンを決める。聴感で何を近づけるかを定め、音量やピーク/RMSは別に測る。
-2. まず作曲層でステップごとの音量・音色指定を表せるようにする。必要な音楽パラメータだけを後方互換のNDJSONへ追加し、Rustで検証・同時発音時刻を確認する。OSCやノードIDは作曲イベントへ入れない。
-3. 303系ベースのアクセントとスライドを、ノートをまたぐ単一音声の振る舞いとして設計する。Devil Fishの可変スライド、音色変化、ドライブ等はその後に個別の聴感目標として扱う。
-4. TR-1000系はまず少数のドラム音とステップごとの変化を対象にする。アナログ／デジタル／サンプルの全エンジンやエフェクトを一度に実装対象へ広げない。
-
-この節は目標と候補の記録であり、プロトコル変更、DSP追加、音色の再現精度は未着手。既存MVPの完成条件と区別し、次の実装範囲は参照音と優先順位を決めてから確定する。
+1. Pick short reference sounds and patterns to compare by ear; measure peak/RMS separately.
+2. Express per-step volume and tone in the composition layer, adding only needed parameters to the backward-compatible NDJSON, with Rust validation and simultaneous-timing tests. No OSC or node IDs in music events.
+3. Design 303-style accent and slide as single-voice behaviour across notes; treat Devil Fish extras later.
+4. For TR-1000-style drums, start with a few sounds and per-step variation rather than every engine and effect.

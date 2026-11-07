@@ -86,7 +86,7 @@ None clipped. Noise can vary per render. Measurements do not establish perceived
 kick/bass separation or perceived loudness matching. On 2026-11-01 the listener
 confirmed hearing the sampler example after its PipeWire output was connected;
 the kick/bass separation and perceived loudness still need their assessment.
-Four-bar comparisons: [before](samples-mix-before.wav), [adjusted](samples-mix-after.wav).
+Four-bar comparisons: [before](audio/samples-mix-before.wav), [adjusted](audio/samples-mix-after.wav).
 The engine source and built-in presets are unchanged; the changed tone belongs only
 to the sampler composition.
 

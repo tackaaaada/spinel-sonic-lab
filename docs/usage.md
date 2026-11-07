@@ -240,17 +240,17 @@ core/target/debug/spinel-sonic-lab --dry-run --watch --bars 2 composer/bin/emit_
 
 The example uses C2=36, E2=40, G2=43, C3=48. See [the protocol](../protocol/README.md) for event fields and validation.
 
-Compare the [original Saw preview](bass-preview.wav), [brighter Saw preview](bright-bass-preview.wav), [Sine preview](sine-bass-preview.wav), [Pulse preview](pulse-bass-preview.wav), and [ADSR preview](adsr-bass-preview.wav). They were regenerated with calibrated gain using SuperCollider's non-realtime engine and contain four non-silent notes. The ADSR preview uses the same Saw oscillator and pitches as the brighter Saw preview; its decay to a 0.25 sustain level intentionally makes the later part of each note quieter.
+Compare the [original Saw preview](audio/bass-preview.wav), [brighter Saw preview](audio/bright-bass-preview.wav), [Sine preview](audio/sine-bass-preview.wav), [Pulse preview](audio/pulse-bass-preview.wav), and [ADSR preview](audio/adsr-bass-preview.wav). They were regenerated with calibrated gain using SuperCollider's non-realtime engine and contain four non-silent notes. The ADSR preview uses the same Saw oscillator and pitches as the brighter Saw preview; its decay to a 0.25 sustain level intentionally makes the later part of each note quieter.
 
-Compare the [static filter preview](static-filter-preview.wav) with the [LFO preview](lfo-bass-preview.wav). Their pitches, note positions, note lengths, and envelope are identical; only LFO depth differs (0 versus 0.9). Both use the same BPM 120 rhythm as the earlier four-note examples.
+Compare the [static filter preview](audio/static-filter-preview.wav) with the [LFO preview](audio/lfo-bass-preview.wav). Their pitches, note positions, note lengths, and envelope are identical; only LFO depth differs (0 versus 0.9). Both use the same BPM 120 rhythm as the earlier four-note examples.
 
-Compare the three preset sounds: [soft](soft-preset-preview.wav), [bright](bright-bass-preview.wav), and [wobble](lfo-bass-preview.wav). All use the same four-note BPM 120 rhythm. Their rendered RMS levels are within 0.3 dB of each other. Peak and RMS measurements for every preview are in [audio levels](audio-levels.md). RMS is a comparison aid, not a substitute for listening; adjust `gain` in a composition if needed.
+Compare the three preset sounds: [soft](audio/soft-preset-preview.wav), [bright](audio/bright-bass-preview.wav), and [wobble](audio/lfo-bass-preview.wav). All use the same four-note BPM 120 rhythm. Their rendered RMS levels are within 0.3 dB of each other. Peak and RMS measurements for every preview are in [audio levels](audio-levels.md). RMS is a comparison aid, not a substitute for listening; adjust `gain` in a composition if needed.
 
-The [melody and chords preview](melody-chords-preview.wav) contains ten note events, including four simultaneous notes at two points. Its measured peak is −9.7 dBFS. This example uses a lower per-note velocity and gain 3.0 to leave room for overlapping voices.
+The [melody and chords preview](audio/melody-chords-preview.wav) contains ten note events, including four simultaneous notes at two points. Its measured peak is −9.7 dBFS. This example uses a lower per-note velocity and gain 3.0 to leave room for overlapping voices.
 
-The [16-step bass preview](step-bass-preview.wav) plays eight notes from the layered patterns. Its 2.4-second render has a measured peak of −15.1 dBFS. The rendering includes 0.05 seconds of silence at the start for SynthDef loading.
+The [16-step bass preview](audio/step-bass-preview.wav) plays eight notes from the layered patterns. Its 2.4-second render has a measured peak of −15.1 dBFS. The rendering includes 0.05 seconds of silence at the start for SynthDef loading.
 
-The named-track example has the same eight-note sound as that preview. Compare it with the [bass-only preview](bass-track-preview.wav), which removes the `counter` track and keeps four C2 notes. The latter peaks at −15.1 dBFS and includes the same 0.05-second loading gap.
+The named-track example has the same eight-note sound as that preview. Compare it with the [bass-only preview](audio/bass-track-preview.wav), which removes the `counter` track and keeps four C2 notes. The latter peaks at −15.1 dBFS and includes the same 0.05-second loading gap.
 
 ## Platform notes
 
@@ -321,7 +321,7 @@ score.track_sample("drums", "kick", 1.0, 0.65)
 
 `sample_steps(track, name, pattern, start_beat, velocity = 1.0)` expands an `x`/`-` 16-step pattern in 0.25-beat steps. Declare sample files before any playback event; paths are relative to the composition file. PCM16 mono and stereo WAV are supported. Each sample plays once, whole, at its original speed, scaled by `velocity` (0–1). See the [protocol](../protocol/README.md#whole-file-samples-backward-compatible-extension) for details and limits.
 
-[Before](samples-mix-before.wav) and [after](samples-mix-after.wav) previews compare the kick/bass separation in the sampler example. The "after" version keeps the kick on the downbeats and moves the bass half a beat later onto the off-beats, with a 3 ms attack Saw of 0.4 beats so it stops before the next kick. This is an arrangement and tone change, not a scheduler timing correction.
+[Before](audio/samples-mix-before.wav) and [after](audio/samples-mix-after.wav) previews compare the kick/bass separation in the sampler example. The "after" version keeps the kick on the downbeats and moves the bass half a beat later onto the off-beats, with a 3 ms attack Saw of 0.4 beats so it stops before the next kick. This is an arrangement and tone change, not a scheduler timing correction.
 
 ## Techno sketch
 
