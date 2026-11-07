@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+mapfile -d '' -t staged < <(git diff --cached --name-only --diff-filter=ACMRT -z)
+(("${#staged[@]}")) || exit 0
+if ! git diff --quiet -- "${staged[@]}"; then
+  printf 'Staged files have unstaged edits; static checks need the staged version.\n' >&2
+  exit 1
+fi
+bash scripts/static-check.sh files "${staged[@]}"

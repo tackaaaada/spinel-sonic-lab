@@ -1,0 +1,2 @@
+# Clippy counts code lines in a function, skipping blank and comment lines.
+too-many-lines-threshold = 10

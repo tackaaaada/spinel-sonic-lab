@@ -1,0 +1,9 @@
+preview = true
+indent-width = 4
+
+[lint]
+select = ["E9", "F", "E111", "E114", "E117", "C90"]
+
+# Cyclomatic complexity of 21 or more fails, as in docs/quality-policy.md.
+[lint.mccabe]
+max-complexity = 20

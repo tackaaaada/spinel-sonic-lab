@@ -1,0 +1,18 @@
+name: Static checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - uses: jdx/mise-action@v4
+      - run: cargo fetch --locked --manifest-path core/Cargo.toml
+      - run: mise run static-check

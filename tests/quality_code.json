@@ -1,0 +1,8 @@
+[
+  {"file":"core/src/a.rs","function":"ok","start_line":1,"end_line":10,"cyclomatic":10,"cognitive":4},
+  {"file":"core/src/a.rs","function":"long","start_line":1,"end_line":11,"cyclomatic":1,"cognitive":0},
+  {"file":"core/src/a.rs","function":"cycle_warn","start_line":1,"end_line":10,"cyclomatic":11,"cognitive":0},
+  {"file":"core/src/a.rs","function":"cycle_fail","start_line":1,"end_line":10,"cyclomatic":21,"cognitive":0},
+  {"file":"core/src/a.rs","function":"cognitive_warn","start_line":1,"end_line":10,"cyclomatic":1,"cognitive":5},
+  {"file":"core/src/a.rs","function":"cognitive_fail","start_line":1,"end_line":10,"cyclomatic":1,"cognitive":15}
+]
