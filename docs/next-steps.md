@@ -1,15 +1,20 @@
-# 次回作業メモ（2026-10-19作成）
+# 次回作業メモ（2026-11-01更新）
 
-サンプラーのコードは実装済み。ホスト側の音声統合確認から再開する。詳細は `handoff-sampler.md`。
+サンプラーのコードと SynthDef 生成、ホスト側UDP時刻テスト、4小節のOSC再生・実音は確認済み。詳細は `handoff-sampler.md`。
 
-## 1. ホスト確認（最優先）
+4小節のRuby風Grid DSLの実装・未確認事項・8小節版の候補は `handoff-grid-dsl.md` に記録した。Gridデモの実音はまだ利用者未確認。
 
-1. `sclang synthdefs/sampler.scd` で `sample_mono.scsyndef` と `sample_stereo.scsyndef` を再生成する。前回は `_LocalIPs` の権限エラーで失敗した。
-2. `mise run audio` で scsynth を起動する。
-3. 別ターミナルで `mise run play-samples` を実行し、キック・スネア・ハイハットとベースが同時に正しい間隔で鳴ることをCLIログとscsynthログで確認する。
-4. `cd core && cargo test --offline --test timing_tests -- --ignored` を実行する。
-5. 聴感を確認する。OSC送信の成功だけでは、人が聴いた証拠にならない。
-6. `mise run watch-samples` でライブ編集を確認する。
+2026-11-07: Gridの `hits` に `velocity:` とシンセ用 `duration_beats:` を追加し、実SpinelとRustの時刻・MIDI・同時発音テストで確認した。卓の H/A → Dynamics → EQ → Aux → Pan → Fader とGridを組み合わせる目標・実装順は `console-grid-dsl.md`。
+
+同日更新: H/A・Pan・FaderはDSL、NDJSON、Rust検証・スケジュール、OSC、SynthDefまで実装。`emit_console_grid.rb` を実Spinelでコンパイルし、Rust全テストとNRT左右・レベル測定が通過。ホストの専用scsynth 57112で4小節12発音命令を受理し、追加エラーなし。利用者の聴感確認は未実施。Dynamics、EQ、Aux SendとReturnの構文とNDJSON検証も追加したが、共有トラックバスと処理グラフは未実装。現在はこれらの設定を持つスコアの再生を明示的に拒否する。
+
+同日更新2: 共有トラックバスと常駐チャンネルストリップ、コンプレッサー、ベルEQ、Aux Send/Return（リバーブ）を実装し、拒否を解除した。`mise run play-console-strip` で全モジュールとGridの組み合わせを試聴できる。NRT測定とホストscsynthでの再生・ライブ変更は通過。利用者の聴感確認が次の作業。
+
+## 1. 残る確認（最優先）
+
+テクノ試作のキックとベースは2026-11-01の試聴で現時点OK。別の音源・編曲の聴感はその都度判断する。
+
+1. `mise run audio` と `mise run watch-samples` を別ターミナルで起動し、`composer/bin/emit_samples.rb` の有効な保存編集が次小節に反映し、無効な編集でも演奏が続くことを確認する。
 
 ## 2. 確認後に選ぶ候補
 

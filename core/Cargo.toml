@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 serde_json = "=1.0.151"
 
+
+[lints.clippy]
+# Function length limit from docs/quality-policy.md; the threshold is in clippy.toml.
+too_many_lines = "deny"

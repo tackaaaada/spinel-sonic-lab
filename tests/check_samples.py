@@ -25,15 +25,17 @@ class DrumAssets(unittest.TestCase):
     def test_wavs_are_short_audible_unclipped_and_finish_in_silence(self):
         for name, duration in [('kick', .35), ('snare', .30), ('hat', .18)]:
             with self.subTest(name=name):
-                frames, data, peak, rms = inspect(ROOT / 'samples' / (name + '.wav'))
-                self.assertAlmostEqual(frames / 48000, duration, delta=.003)
-                self.assertGreater(peak, .05)
-                self.assertLess(peak, .95)
-                self.assertGreater(rms, .005)
-                # A sample trigger should not acquire a loading gap in the asset.
-                self.assertGreater(max(abs(x) for x in data[:960]), 100)
-                self.assertLessEqual(max(abs(x) for x in data[-960:]), 2)
-                print(f'{name}: frames={frames} peak={20*math.log10(peak):.2f}dBFS rms={20*math.log10(rms):.2f}dBFS')
+                self.assert_asset(name, duration)
+
+    def assert_asset(self, name, duration):
+        frames, data, peak, rms = inspect(ROOT / 'samples' / (name + '.wav'))
+        self.assertAlmostEqual(frames / 48000, duration, delta=.003)
+        self.assertGreater(peak, .05)
+        self.assertLess(peak, .95)
+        self.assertGreater(rms, .005)
+        self.assertGreater(max(abs(x) for x in data[:960]), 100)
+        self.assertLessEqual(max(abs(x) for x in data[-960:]), 2)
+        print(f'{name}: frames={frames} peak={20*math.log10(peak):.2f}dBFS rms={20*math.log10(rms):.2f}dBFS')
 
 
 if __name__ == '__main__':

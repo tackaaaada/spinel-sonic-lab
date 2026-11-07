@@ -23,21 +23,22 @@ def osc_string(value):
     return raw + b'\0' * (-len(raw) % 4)
 
 
+def osc_argument(value):
+    if isinstance(value, str):
+        return 's', osc_string(value)
+    if isinstance(value, bytes):
+        return 'b', struct.pack('>i', len(value)) + value + b'\0' * (-len(value) % 4)
+    if isinstance(value, int):
+        return 'i', struct.pack('>i', value)
+    return 'f', struct.pack('>f', value)
+
+
 def message(address, *args):
     tags, payload = ',', b''
     for arg in args:
-        if isinstance(arg, str):
-            tags += 's'
-            payload += osc_string(arg)
-        elif isinstance(arg, bytes):
-            tags += 'b'
-            payload += struct.pack('>i', len(arg)) + arg + b'\0' * (-len(arg) % 4)
-        elif isinstance(arg, int):
-            tags += 'i'
-            payload += struct.pack('>i', arg)
-        else:
-            tags += 'f'
-            payload += struct.pack('>f', arg)
+        tag, encoded = osc_argument(arg)
+        tags += tag
+        payload += encoded
     return osc_string(address) + osc_string(tags) + payload
 
 
@@ -48,6 +49,27 @@ def packet(at, msg):
     return struct.pack('>i', len(bundle)) + bundle
 
 
+def score_for_recipe(recipe, synthdef):
+    _, midi, osc, cutoff, decay, release, gain, duration, length = recipe
+    args = ('freq', 440.0 * 2 ** ((midi - 69) / 12), 'osc', osc, 'cutoff', float(cutoff))
+    args += ('attack', .001, 'decay', decay, 'sustain', 0.0, 'release', release)
+    args += ('gain', gain, 'dur', duration, 'amp', .12)
+    trigger = message('/s_new', 'analog_bass', 1000, 0, 0, *args)
+    # The load completes at logical time zero, before its completion trigger.
+    return packet(0, message('/d_load', str(synthdef), trigger)) + packet(length, message('/c_set', 0, 0))
+
+
+def render_recipe(recipe, synthdef, output, temp):
+    name = recipe[0]
+    score = temp / (name + '.osc')
+    score.write_bytes(score_for_recipe(recipe, synthdef))
+    rendered = temp / (name + '.wav')
+    command = ['scsynth', '-N', str(score), '_', str(rendered), '48000', 'WAV', 'int16', '-i', '0', '-o', '2']
+    subprocess.run(command, check=True, timeout=30)
+    (output / rendered.name).write_bytes(rendered.read_bytes())
+    print(f'Rendered samples/{name}.wav', flush=True)
+
+
 def main():
     synthdef = ROOT / 'synthdefs/analog_bass.scsyndef'
     if not synthdef.is_file():
@@ -55,23 +77,8 @@ def main():
     output = ROOT / 'samples'
     output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='spinel-drums-') as temp:
-        for name, midi, osc, cutoff, decay, release, gain, duration, length in RECIPES:
-            trigger = message('/s_new', 'analog_bass', 1000, 0, 0,
-                              'freq', 440.0 * 2 ** ((midi - 69) / 12),
-                              'osc', osc, 'cutoff', float(cutoff),
-                              'attack', .001, 'decay', decay, 'sustain', 0.0,
-                              'release', release, 'gain', gain, 'dur', duration, 'amp', .12)
-            score = Path(temp) / (name + '.osc')
-            # NRT completes the load at logical time zero before the completion
-            # message creates the synth. No loading silence is baked into the WAV.
-            score.write_bytes(packet(0, message('/d_load', str(synthdef), trigger))
-                              + packet(length, message('/c_set', 0, 0)))
-            rendered = Path(temp) / (name + '.wav')
-            subprocess.run(['scsynth', '-N', str(score), '_', str(rendered),
-                            '48000', 'WAV', 'int16', '-i', '0', '-o', '2'],
-                           check=True, timeout=30)
-            (output / rendered.name).write_bytes(rendered.read_bytes())
-            print(f'Rendered samples/{name}.wav', flush=True)
+        for recipe in RECIPES:
+            render_recipe(recipe, synthdef, output, Path(temp))
 
 
 if __name__ == '__main__':

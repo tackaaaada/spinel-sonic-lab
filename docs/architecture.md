@@ -34,6 +34,32 @@ The deterministic clock test checks first-note lead, 250ms timestamp differences
 
 The OSC target is `127.0.0.1:57110` by default. There is no network performance, FFI, GUI, or custom DSP in this version.
 
+## Console channel path
+
+`TrackScore` can now place `ha gain_db:`, `pan position:`, and `fader db:` above its
+four-bar Grid loop. The composer emits one validated `channel` declaration
+per configured track before playback events. Rust validates channel names,
+levels, pan position, duplicates, and declaration order before playback or
+mute. The scheduler applies the H/A and Fader level to synth and sample
+amplitudes and carries only the pan value to OSC; track names and protocol
+objects do not enter the OSC packet. The generated SynthDefs use `Pan2` for
+mono signals and `Balance2` for stereo samples, with a center correction that
+preserves existing center output levels.
+
+A track whose channel has Dynamics, EQ, or an Aux send is routed instead.
+`schedule.rs` marks its playback events with a logical route (the track name)
+and leaves their level at unity and pan at center. `mixer.rs` owns the engine
+side: one private stereo bus and one persistent `channel_strip` node per routed
+track, one `aux_return` node per used return, node IDs, bus numbers,
+boundary-timed control updates, and retirement after the last source end (plus
+a 3-second reverb tail for returns). `osc.rs` resolves the route to the bus
+when encoding `/s_new` (`out`), creates a strip group and a following return
+group at the tail of the root group so sources (root head) run first, and
+sends `/n_set` bundles timetagged at the bar boundary. A watch reload commits
+only after sample buffers and the graph are prepared; a failed node creation
+frees the new nodes and keeps the active graph. Full design notes are in
+[`console-grid-dsl.md`](console-grid-dsl.md).
+
 
 
 ## Sampler

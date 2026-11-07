@@ -1,3 +1,4 @@
+pub mod mixer;
 pub mod model;
 pub mod osc;
 pub mod schedule;

@@ -82,7 +82,9 @@ adjusted bass settings, same notes, timing and file length:
 
 Only Saw is selected in the example; these controls are not a loudness-matched set.
 None clipped. Noise can vary per render. Measurements do not establish perceived
-kick/bass separation or perceived loudness matching; listener confirmation is pending.
+kick/bass separation or perceived loudness matching. On 2026-11-01 the listener
+confirmed hearing the sampler example after its PipeWire output was connected;
+the kick/bass separation and perceived loudness still need their assessment.
 Four-bar comparisons: [before](samples-mix-before.wav), [adjusted](samples-mix-after.wav).
 The engine source and built-in presets are unchanged; the changed tone belongs only
 to the sampler composition.
@@ -94,3 +96,50 @@ failed during `_LocalIPs` initialization in the restricted execution environment
 NRT comparison used the host-generated, existing compiled definitions; no engine
 source was changed. `mise run play-samples` regenerates both definitions on the
 host before the next listening check.
+
+## 2026-11-07 console channel render
+
+After adding H/A trim, Pan, and Fader support, both SynthDefs were regenerated
+with host `sclang`. `python3 tests/check_channel_audio.py` rendered the new
+definitions with `scsynth -N` at 48 kHz, stereo PCM16. Each synth comparison
+used the same 0.7-second file, C3, velocity-derived `amp = 0.1`,
+`gain = 1.0`, cutoff 1800 Hz, and center pan. The dBFS values cover the whole
+file including silence.
+
+| Oscillator | Peak dBFS | RMS dBFS |
+|---|---:|---:|
+| Saw | -27.37 | -38.14 |
+| Sine | -21.96 | -30.15 |
+| Pulse | -23.35 | -33.16 |
+| Noise | -24.31 | -41.57 |
+
+The test checks that center pan yields identical left/right synth channels,
+hard-left pan silences the right channel, and halving the synth amplitude
+halves its RMS within quantization tolerance. Both mono and stereo samples
+rendered hard left with a silent right channel; the hard-left to center left
+peak ratio was approximately 1.414. The hard-left sample peaks were -19.69
+dBFS (mono test signal) and -12.61 dBFS (current kick WAV). Noise figures vary
+across renders. These are signal measurements; the console Grid example has
+not yet been heard and judged by the user.
+
+## 2026-11-07 channel strip render
+
+`synthdefs/channel.scd` was compiled with host `sclang` into
+`channel_strip.scsyndef` and `aux_return.scsyndef`. `tests/check_channel_audio.py`
+now also renders a 200 Hz Sine through the strip (groups and node order as in
+the Rust engine) and compares RMS over 0.3–0.8 s. Source gain and oscillator
+levels did not change; the table above re-measured identically except for the
+usual Noise variation (-24.22 / -41.36 dBFS this run).
+
+| Check | Result |
+|---|---:|
+| Bypassed strip vs direct output | within 0.5% |
+| Compressor 4:1, -20 dB threshold, input peak -6 dBFS | -9.60 dB |
+| +12 dB H/A into that compressor | +3.00 dB out |
+| Bell +6 dB at 200 Hz (on the tone) | +6.00 dB |
+| Bell +6 dB at 5 kHz (off the tone) | +0.01 dB |
+| Aux return with channel Fader closed | -17.53 dBFS RMS, tail -32.29 dBFS |
+| Strip hard left / center left peak | ≈1.414, right silent |
+
+The strip adds no make-up gain, so compression lowers level. These are signal
+measurements; the strip has not yet been heard and judged by the user.
