@@ -2,6 +2,8 @@
 
 [日本語](README.ja.md)
 
+> **Status: in development (v0.x).** The DSL, the NDJSON protocol and the CLI options may change without notice. See the [roadmap](docs/roadmap.md).
+
 A minimal command-line music environment. Write a bass line or a drum pattern in Spinel-compatible Ruby, compile it to a native composer, and play it live through SuperCollider's `scsynth`.
 
 ```
