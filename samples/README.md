@@ -1,32 +1,27 @@
-# SuperCollider製ドラム素材
+# Drum samples
 
-既存の `synthdefs/analog_bass.scd` のドラム合成をSuperCollider自身で描画したWAV。
-外部からダウンロードした音源は使用していない。
-キックはSineとピッチ下降、スネアは音程成分とNoise、ハイハットはハイパスを通したNoise。
-現在の合成ドラムの代わりに、サンプラーで原音程・通常速度で再生するための素材。
-音声サーバー起動後に `mise run play-samples` でRustのサンプラー経由で演奏できる。
+[日本語](README.ja.md)
 
-| 素材 | 形式 | 実際の長さ | Peak | RMS |
+Kick, snare and hat WAVs rendered by SuperCollider from the project's own `analog_bass` drum synthesis (see `recipes/`). No third-party audio is used; the files are under CC BY 4.0 ([LICENSE-AUDIO](../LICENSE-AUDIO)). They let the sampler play drums at original pitch and speed instead of the synthesized drums. With the audio server running, `mise run play-samples` plays them.
+
+| File | Format | Length | Peak | RMS |
 |---|---|---:|---:|---:|
-| [kick.wav](kick.wav) | 48kHz / stereo / PCM16 | 0.3507秒 | −7.66 dBFS | −16.64 dBFS |
-| [snare.wav](snare.wav) | 同上 | 0.3013秒 | −8.10 dBFS | −24.13 dBFS |
-| [hat.wav](hat.wav) | 同上 | 0.1813秒 | −10.45 dBFS | −26.84 dBFS |
+| [kick.wav](kick.wav) | 48 kHz / stereo / PCM16 | 0.3507 s | −7.66 dBFS | −16.64 dBFS |
+| [snare.wav](snare.wav) | same | 0.3013 s | −8.10 dBFS | −24.13 dBFS |
+| [hat.wav](hat.wav) | same | 0.1813 s | −10.45 dBFS | −26.84 dBFS |
 
-RMSは末尾の無音を含むファイル全体で測定した値。素材間の聴感音量一致を示すものではない。
-単発でクリップしないことを確認しているが、複数音の重ね合わせには別途ミックスの確認が必要。
+RMS covers the whole file including trailing silence and does not imply matched perceived loudness. Each sample is checked not to clip on its own; check the mix when layering them. The WAVs are stored with Git LFS (`git lfs pull`).
 
-## 再生成
-
-プロジェクトのルートで:
+## Regenerate
 
 ```sh
 mise run samples
 ```
 
-個別のコマンド:
+Or step by step from the repository root:
 
 ```sh
-QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic sclang synthdefs/analog_bass.scd
+sclang synthdefs/analog_bass.scd
 cargo build --offline --manifest-path core/Cargo.toml --bin render_nrt
 core/target/debug/render_nrt samples/recipes/kick.ndjson samples/kick.wav 0.35
 core/target/debug/render_nrt samples/recipes/snare.ndjson samples/snare.wav 0.30
@@ -34,23 +29,18 @@ core/target/debug/render_nrt samples/recipes/hat.ndjson samples/hat.wav 0.18
 cargo test --offline --manifest-path core/Cargo.toml --test drum_asset_tests
 ```
 
-`scsynth -N` による非リアルタイム描画なので音声デバイス・起動中のライブサーバー・UDP接続は不要。
-`render_nrt` はライブ再生と同じRustのスケジューラとOSCエンコーダでNRTスコアを作り、scsynthを起動する。
-SynthDefのロードと音は同じ論理時刻0に置き、ロード用無音を素材の先頭へ入れない。
-一時OSCスコアは出力WAVの隣に作成し、描画後に削除する。
+Rendering uses `scsynth -N` (non-realtime), so no audio device, live server or UDP connection is needed. `render_nrt` builds the NRT score with the same Rust scheduler and OSC encoder as live playback. The SynthDef load and the sound share logical time 0, so no loading silence precedes the sample.
 
-レシピは `samples/recipes/*.ndjson` に通常のスコアとして固定している（BPM 60なので1拍=1秒）。
-現行プリセットを基に、velocity 0.6相当（amp 0.12）、BPM 120時のドラム長を用いた。
-既存の作曲プリセットを後から編集しても、この素材のレシピは自動では変わらない。
-キックは決定的で、現在のSynthDefでは旧Pythonスクリプトの出力とバイト単位で一致する。
-コミット済み `kick.wav` はSynthDef再生成前の描画で、1フレームだけ1 LSB異なる。
-Noiseを使うスネアとハイハットは再生成ごとに波形・測定値が変化する（10回でPeak最大1.6 dB、RMS 0.5 dB未満）。
-NRTのブロック境界によりファイル長は指定より最大数ms長くなる。
+The recipes in `recipes/*.ndjson` are fixed ordinary scores (BPM 60, so one beat is one second), based on the current presets at velocity ≈0.6 (amp 0.12) and BPM 120 drum lengths. Editing the composition presets later does not change these recipes.
 
-## 検証
+- The kick is deterministic and matches the old Python script's output byte for byte. The committed `kick.wav` was rendered before a SynthDef regeneration and differs by 1 LSB in one frame.
+- Snare and hat use noise, so each regeneration differs (over 10 runs: peak up to 1.6 dB, RMS under 0.5 dB).
+- NRT block boundaries can make a file a few ms longer than requested.
 
-`mise run check-samples`（`core/tests/drum_asset_tests.rs`）は形式、指定時間との誤差、非無音、ピーク余裕、
-先頭10msの発音、末尾10msの静けさを確認する。厳密なファイルハッシュには依存しない。
-`mise run audio-check` はレシピを描画し、キックがコミット済み素材と1 LSB以内、
-スネアとハイハットが同じ長さでRMS ±1 dB以内であることも確認する。
-実音を聴いて音色が用途に合うかは別途確認する。
+## Verify
+
+`mise run check-samples` (`core/tests/drum_asset_tests.rs`) checks the format, length against the request, non-silence, peak headroom, sound within the first 10 ms and quiet in the last 10 ms. It does not depend on exact file hashes. `mise run audio-check` also renders the recipes and requires the kick within 1 LSB of the committed file and the snare/hat to match in length with RMS within ±1 dB. Whether the sounds suit your music still needs listening.
+
+## Adding third-party samples
+
+Keep the original license and record each file in [ATTRIBUTION.md](ATTRIBUTION.md). Use only CC0 or CC BY sounds (for example from Freesound); avoid NonCommercial ones.

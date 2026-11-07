@@ -1,5 +1,7 @@
 # NDJSON score protocol
 
+[日本語の概要](README.ja.md) (this English document is normative)
+
 UTF-8 text, one JSON object per line. Blank lines are ignored. The first object must be a tempo event. It may be followed by `tone` and `sample` declarations, then one or more `note` or `sample_note` playback events. The entire score is validated before playback. Unknown fields and event types are errors.
 
 ```json
