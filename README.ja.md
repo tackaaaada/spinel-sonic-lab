@@ -9,6 +9,17 @@ Rubyの作曲 ──Spinel──▶ ネイティブcomposer ──NDJSON──�
  (composer/)                                          (core/)        (synthdefs/)
 ```
 
+## 技術スタック
+
+| レイヤー | 技術 |
+|---|---|
+| 作曲 | Ruby(Spinelが対応するサブセット)を [Spinel](https://github.com/matz/spinel) で事前コンパイル |
+| 実行・スケジューラ | Rust(edition 2024)、依存は `serde_json` のみ |
+| 通信形式 | NDJSONスコアプロトコル、UDP上のOSC |
+| 音声エンジン | [SuperCollider](https://supercollider.github.io/) の `scsynth`(SynthDefは `sclang` で記述) |
+| 開発ツール | [mise](https://mise.jdx.dev/) タスク、Git LFS(WAV)、rustfmt/Clippy、RuboCop |
+| 対応環境 | Linux(Omarchyで開発)、macOS(動作確認済み) |
+
 ## 特徴
 
 - **Rubyで作曲、ネイティブで実行。** 音名、コード、アルペジオ、16ステップ、複数小節ループ、名前付きトラック、音色プリセットを持つ小さなDSLを [Spinel](https://github.com/matz/spinel) で事前コンパイルします。演奏時にRubyランタイムは不要です。
@@ -22,19 +33,22 @@ Rubyの作曲 ──Spinel──▶ ネイティブcomposer ──NDJSON──�
 
 ## クイックスタート
 
-必要なもの: Rust(1.96で確認)、Cコンパイラ、`make`、Ruby、Git LFS(Spinelのビルド用)、SuperCollider 3.14(`sclang`、`scsynth`)。詳細は[Requirements](docs/usage.md#requirements)を参照してください(英語)。
+必要なもの: Rust(1.96以降)、Cコンパイラ、`make`、Ruby、Git LFS(Spinelのビルド用)、SuperCollider 3.14(`sclang`、`scsynth`)。詳細は[Requirements](docs/usage.md#requirements)を参照してください(英語)。
 
 ```sh
+git lfs install                   # マシンごとに1回。WAV素材はGit LFSで管理しています
 git clone https://github.com/tackaaaada/spinel-sonic-lab.git
 cd spinel-sonic-lab
-git lfs pull                      # WAV素材はGit LFSで管理しています
+git lfs pull                      # WAVがLFSポインタのままのときだけ必要
 
 # Spinelをこのリポジトリの隣にビルド(docs/usage.md#build-spinel)
 export SPINEL_BIN=../spinel/bin/spinel
 
 cargo build --manifest-path core/Cargo.toml
-sclang synthdefs/analog_bass.scd  # synthdefs/analog_bass.scsyndef を生成
+for f in analog_bass sampler channel; do sclang synthdefs/$f.scd; done   # synthdefs/*.scsyndef を生成
 ```
+
+macOSでは `sclang` と `scsynth` がアプリ内(`/Applications/SuperCollider.app/Contents/MacOS/sclang`、`.../Resources/scsynth`)にあるため、`PATH` に追加してください。[プラットフォーム別の注意](docs/usage.md#platform-notes)(英語)も参照してください。
 
 ターミナル1 — 音声サーバーを起動し、`SuperCollider 3 server ready` を待ちます:
 

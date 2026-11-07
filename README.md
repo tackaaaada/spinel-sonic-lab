@@ -9,6 +9,17 @@ Ruby composition ──Spinel──▶ native composer ──NDJSON──▶ Rus
   (composer/)                                             (core/)        (synthdefs/)
 ```
 
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Composition | Ruby (Spinel-supported subset), compiled ahead of time with [Spinel](https://github.com/matz/spinel) |
+| Runtime and scheduler | Rust (edition 2024), `serde_json` only |
+| Wire format | NDJSON score protocol, OSC over UDP |
+| Audio engine | [SuperCollider](https://supercollider.github.io/) `scsynth` with SynthDefs written in `sclang` |
+| Tooling | [mise](https://mise.jdx.dev/) tasks, Git LFS (WAV files), rustfmt/Clippy, RuboCop |
+| Platforms | Linux (developed on Omarchy) and macOS (verified) |
+
 ## Features
 
 - **Compose in Ruby, run natively.** Compositions use a small DSL (notes, chords, arpeggios, 16-step patterns, multi-bar loops, named tracks and tone presets) and are compiled ahead of time by [Spinel](https://github.com/matz/spinel); no Ruby runtime is needed to play.
@@ -22,19 +33,22 @@ Out of scope: GUI, MIDI input, plugins, network performance and custom DSP.
 
 ## Quick start
 
-Requirements: Rust (1.96 tested), a C compiler, `make`, Ruby and Git LFS (to build Spinel), and SuperCollider 3.14 (`sclang`, `scsynth`). See [Requirements](docs/usage.md#requirements) for details.
+Requirements: Rust (1.96 or newer), a C compiler, `make`, Ruby and Git LFS (to build Spinel), and SuperCollider 3.14 (`sclang`, `scsynth`). See [Requirements](docs/usage.md#requirements) for details.
 
 ```sh
+git lfs install                   # once per machine; WAV samples are stored with Git LFS
 git clone https://github.com/tackaaaada/spinel-sonic-lab.git
 cd spinel-sonic-lab
-git lfs pull                      # WAV samples are stored with Git LFS
+git lfs pull                      # only needed if the WAVs are still LFS pointers
 
 # Build Spinel next to this repository (see docs/usage.md#build-spinel)
 export SPINEL_BIN=../spinel/bin/spinel
 
 cargo build --manifest-path core/Cargo.toml
-sclang synthdefs/analog_bass.scd  # writes synthdefs/analog_bass.scsyndef
+for f in analog_bass sampler channel; do sclang synthdefs/$f.scd; done   # writes synthdefs/*.scsyndef
 ```
+
+On macOS, `sclang` and `scsynth` live inside the app bundle (`/Applications/SuperCollider.app/Contents/MacOS/sclang` and `.../Resources/scsynth`); add them to `PATH`. See [platform notes](docs/usage.md#platform-notes).
 
 Terminal 1 — start the audio server and wait for `SuperCollider 3 server ready`:
 

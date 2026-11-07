@@ -47,7 +47,7 @@ cargo build --manifest-path core/Cargo.toml
 sclang synthdefs/analog_bass.scd
 ```
 
-The `sclang` command creates `synthdefs/analog_bass.scsyndef`. The generated file is ignored by Git. The definition has selectable Saw, Sine, Pulse, and WhiteNoise sources, a low-pass filter with optional LFO, ADSR envelope, stereo output, and automatic node release. Its controls are `freq` (Hz), `amp` (0–0.2 in this CLI), `gain` (0–4 from the score), `dur` (seconds), `cutoff` (Hz), `attack`, `decay`, and `release` (seconds), `sustain` (0–1), `lfoRate` (Hz), `lfoDepth` (0–1), `osc` (0=Saw, 1=Sine, 2=Pulse, 3=WhiteNoise), and `out` (default 0).
+Run all three definitions: `sclang synthdefs/analog_bass.scd`, `sclang synthdefs/sampler.scd` and `sclang synthdefs/channel.scd` (or `mise run synthdef`). They create `synthdefs/*.scsyndef`, which are ignored by Git, so repeat this after every fresh clone. The sampler needs `sampler.scd` and channel strips need `channel.scd`; a missing file can surface as a misleading "scsynth not found" failure in the channel-strip render tests. The `sclang` command creates `synthdefs/analog_bass.scsyndef`. The generated file is ignored by Git. The definition has selectable Saw, Sine, Pulse, and WhiteNoise sources, a low-pass filter with optional LFO, ADSR envelope, stereo output, and automatic node release. Its controls are `freq` (Hz), `amp` (0–0.2 in this CLI), `gain` (0–4 from the score), `dur` (seconds), `cutoff` (Hz), `attack`, `decay`, and `release` (seconds), `sustain` (0–1), `lfoRate` (Hz), `lfoDepth` (0–1), `osc` (0=Saw, 1=Sine, 2=Pulse, 3=WhiteNoise), and `out` (default 0).
 
 ## Play the example
 
@@ -252,6 +252,18 @@ The [16-step bass preview](step-bass-preview.wav) plays eight notes from the lay
 
 The named-track example has the same eight-note sound as that preview. Compare it with the [bass-only preview](bass-track-preview.wav), which removes the `counter` track and keeps four C2 notes. The latter peaks at −15.1 dBFS and includes the same 0.05-second loading gap.
 
+## Platform notes
+
+**macOS** (verified):
+
+- Install Git LFS and run `git lfs install` before cloning. Without it the checkout can stop partway and leave WAVs missing; recover with `git lfs pull` (or `git restore --source=HEAD --staged --worktree :/`).
+- Without Homebrew, install Rust with [rustup](https://rustup.rs/) and SuperCollider from its `.app` download. Install a current Ruby first on `PATH` if Spinel's `make` cannot load `prism`.
+- `sclang` is at `/Applications/SuperCollider.app/Contents/MacOS/sclang` and `scsynth` at `.../Contents/Resources/scsynth`; neither is on `PATH` by default.
+- Do **not** set `QT_QPA_PLATFORM=offscreen`: Qt on macOS has only the `cocoa` platform and `sclang` fails to start. `mise.toml` sets it for Linux; run the `sclang` commands directly or override the variable.
+- `scsynth` picks the default output device automatically (for example 96 kHz). If nothing is audible, check the system output device. Stop the server afterwards with `pkill -f "scsynth -u 57110"`.
+
+**Linux** (Omarchy): `sclang` needs `QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic` when run headless; `mise run` tasks set this. See [development-omarchy.md](development-omarchy.md).
+
 ## Tests
 
 ```sh
@@ -260,7 +272,7 @@ sh tests/check_spinel.sh
 mise run audio-check   # needs scsynth and generated SynthDefs; no audio device
 ```
 
-The Rust tests need no SuperCollider connection. Scheduling and bar-transition tests do not sleep; the background-worker test waits for an actual channel notification with a bounded timeout. `core/tests/live_tests.rs` covers bar-boundary changes, tempo edits, failed reloads, and Spinel recompilation. The Spinel test actually compiles and runs the compositions, including Sine, Pulse, all three preset choices, melody with chords, 16-step rhythm, and named tracks, then compares their NDJSON output to the checked-in examples. It checks sharp-note conversion, invalid pitch names, invalid step patterns, and invalid track names. Remove `--offline` if Cargo dependencies are not yet cached.
+The Rust tests need no SuperCollider connection. Scheduling and bar-transition tests do not sleep; the background-worker test waits for an actual channel notification with a bounded timeout. `core/tests/live_tests.rs` covers bar-boundary changes, tempo edits, failed reloads, and Spinel recompilation. The Spinel test actually compiles and runs the compositions, including Sine, Pulse, all three preset choices, melody with chords, 16-step rhythm, and named tracks, then compares their NDJSON output to the checked-in examples. It checks sharp-note conversion, invalid pitch names, invalid step patterns, and invalid track names. Remove `--offline` if Cargo dependencies are not yet cached. The 13 tests that need `scsynth` are `#[ignore]`d; run them with `scsynth` on `PATH` via `cargo test --offline --manifest-path core/Cargo.toml -- --ignored`. The `live_tests` recompilation tests fail without `SPINEL_BIN` set.
 
 `mise run audio-check` renders NDJSON scores offline with `scsynth -N` through the same scheduler, channel graph, sample buffers and OSC encoders as live playback, then measures the WAVs: oscillator levels, pan law, compressor, bell EQ, pre-Fader Aux with reverb tail, and the drum recipes. These are signal checks, not a listening check. `mise run render -- INPUT OUTPUT.wav [SECONDS]` renders any `.ndjson` or Spinel `.rb` score to a WAV the same way, which is handy for listening without starting the audio server.
 
