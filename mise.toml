@@ -2,7 +2,7 @@
 jq = "1.8.2"
 ruby = "4.0.1"
 "gem:rubocop" = "1.92.2"
-rust = "1.99.1"
+rust = { version = "1.99.1", components = "rustfmt,clippy" }
 go = "1.27.3"
 "go:github.com/richardwooding/codemetrics/cmd/codemetrics" = "v0.8.0"
 "go:github.com/miguelbravo7/code-inspector/cmd/code-inspector" = "v0.2.0"
